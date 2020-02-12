@@ -49,7 +49,7 @@ def CDColor(color_name):
         return '#99e5ff'
     return '#004191'
 
-def uniSblue():
+    def uniSblue():
     """
     hier dann in der "doc" steht der RGB value
     """
