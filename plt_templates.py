@@ -3,7 +3,7 @@ from palette import *
 
 import matplotlib.font_manager as fm
 
-def linestyles( x, y, z, lw=4, ls='-', **kwargs):
+def linestyles( lw=4, ls='-', **kwargs):
     """
     Pre defined linecolors given in a list, for each entry in the list there is one color
     The corporate colors are given in this order:
