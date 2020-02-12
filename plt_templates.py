@@ -1,24 +1,27 @@
 import matplotlib.pyplot as plt
 from palette import *
 
-#NOTE TODO
-#wir können hier auch weiter unten einige matplotlib funktionen aliasen, also default_figure als subplots
-# oder add_legend als nur legend, dass eben des plt.legend dann mit template.legend ersetzt wird
-#NOTES
-
-def linestyles(linestyle='-', linewidth=3, mec='black', markersize=2, **kwargs):
-    #kwargs macht es möglich dass man quasi alles normal übergibt, und dann kriegt man jede default linie mit ihrer farbe in dem gewünschten stil zurück zurück
+def linestyles():
     """
-    Default linestyles in a list
+    User defined linestyles written in a list.
     Easily accessed with e.g. ls=linestyles()... ax.plot(..., **ls[i] )
-    Lines by color, here in the (help) elaboration: all the colors for the n lines are displayed
+    The user has to know which line has which attributes
     """
+
+    #kwargs = { **{'mec':mec, 'markersize':markersize}, **kwargs} #put some defaults in the kwargs 
+    ##hier definiert man dann quasi die default farbe pro linie
+    #styles.append( dict( ls=linestyle, lw=linewidth, color=uniSblue(), **kwargs) )
+    #styles.append( dict( ls=linestyle, lw=linewidth, color=uniSred(), **kwargs) )
+    ## etc...
+
     styles = []
-    kwargs = { **{'mec':mec, 'markersize':markersize}, **kwargs} #put some defaults in the kwargs 
-    #hier definiert man dann quasi die default farbe pro linie
-    styles.append( dict( ls=linestyle, lw=linewidth, color=uniSblue(), **kwargs) )
-    styles.append( dict( ls=linestyle, lw=linewidth, color=uniSred(), **kwargs) )
-    # etc...
+    styles.append( { 'linewidth' : 4, 'color' : '#004191', 'linestyle' : '-' } ) # dark blue
+    styles.append( { 'linewidth' : 4, 'color' : '#00beff', 'linestyle' : '-' } ) # light blue
+    styles.append( { 'linewidth' : 4, 'color' : '#8dc63f', 'linestyle' : '-' } ) # green
+    styles.append( { 'linewidth' : 4, 'color' : '#ec008d', 'linestyle' : '-' } ) # magenta
+    styles.append( { 'linewidth' : 4, 'color' : '#323232', 'linestyle' : '-' } ) # gray
+    styles.append( { 'linewidth' : 4, 'color' : '#ee1c25', 'linestyle' : '-' } ) # red
+    styles.append( { 'linewidth' : 4, 'color' : '#ffdd00', 'linestyle' : '-' } ) # yellow
     return styles
 
 def default_figure( n_row=1, n_col=1, figsize=(6,5), other_default='gotta think of them', **kwargs):
@@ -76,6 +79,11 @@ def add_legend( ax, position='top_right', opacity=0.5, **kwargs):
 
     return ax
 
+
+def axis_labels( ax, x, y, size=16):
+    ax.set_xlabel(x, size=size)
+    ax.set_ylabel(y, size=size)
+    return ax
 
 
 def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
