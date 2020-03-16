@@ -2,8 +2,9 @@ import matplotlib.pyplot as plt
 from palette import *
 
 import matplotlib.font_manager as fm
+print( '"import plt_templates..." Default parameters for matplotlib.pyplot have to be updated, use "plt.rcParams.update( plt_templates.rc_default)"')
 
-def linestyles( lw=4, ls='-', **kwargs):
+def linestyles( lw=3, ls='-', **kwargs):
     """
     Pre defined linecolors given in a list, for each entry in the list there is one color
     The corporate colors are given in this order:
@@ -39,17 +40,23 @@ def linestyles( lw=4, ls='-', **kwargs):
     return styles
 
 
-def rc_default( fontsize=20, grid=True):
+def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kwargs):
     """
     Gives some default parameters set for a nice plot layout
     This function is to be used in the main as "plt.rcParams.update( rc_default() )"
     
     Parameters, optional:
     ---------------------
-    fontsize:       int, default:20
+    fontsize:       float, default:20
                     fontsize of all things in the plot
     grid:           bool, default: True
                     If a grid should be plotted per default in each plot
+    ticksize:       float, default None
+                    fontsize of the tikz, is set to 0.6*'fontsize' if not specified
+
+    **kwargs:       unpacked dict
+                    hard overwrites the defaults with any given rcParams (in kwargs). 
+                    If no kwargs are given, the defaults are set
 
     Returns:
     --------
@@ -57,70 +64,119 @@ def rc_default( fontsize=20, grid=True):
                     dictionary of set default parameters 
     """
     default_params = dict() 
-    ## Font specification
+    ## Font and text specification
     try:
         uni_font = [ font for font in fm.findSystemFonts() if ('UniversforUniS65Bd-Regular.ttf' in font ) ][0]
+        default_params.update( { 'font.family':uni_font, 'text.usetex':True } )
     except:
-        print( 'specified font for Uni Stuttgart not found, continuing with default font' )
-    default_params.update( { 'font.family':uni_font, 'font.size':fontsize} )
+        print( 'Uni stuttgart font not installed, continuing with default font' )
+    default_params.update( { 'font.size':fontsize} )
+    default_params.update( { 'xtick.labelsize':ticksize, 'ytick.labelsize':ticksize } )
 
+    ## layout of the figure, sizes
+    default_params.update( {'axes.linewidth': 1.3 } )
+    default_params.update( {'axes.titlepad':3} ) 
+    default_params.update( {'xtick.major.pad':1.5, 'ytick.major.pad':1.5 } )
+    default_params.update( {'xtick.major.size':2.5, 'ytick.major.size':2.5} )
     ## Default Grid
     if grid:
-        default_params.update( { 'axes.grid':True, 'grid.color':'#AAAAAA', 'grid.linestyle':':', 'grid.linewidth':1.2 } )
+        default_params.update( { 'axes.grid':True, 'grid.color':'#AAAAAA', 'grid.linestyle':':', 'grid.linewidth':0.8 } )
+    ## legend
+    default_params.update( {'legend.fontsize': legend_fontsize } )
 
-    ## Spacing between subplots
-#     'figure.subplot.bottom': 0.11,
-#     'figure.subplot.hspace': 0.2,
-#     'figure.subplot.left': 0.125,
-#     'figure.subplot.right': 0.9,
-#     'figure.subplot.top': 0.88,
-#     'figure.subplot.wspace': 0.2,
-    ## MUSS ICH NOCH FEINTUNEN, sodass es immer hübsch ist
+    default_params.update( **kwargs) 
     return default_params
 
-
-
-def subplots( n_row=1, n_col=1, figsize=None, **kwargs):
+def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     """
-    Shadows the "plt.subplots" function and adds default styles.  See help( plt.subplots) for reference
-    This function yields optimal results for these subplot layouts: 1x1, 1x2 or 1x3
-     If "figsize" is not set, the spacing between the plots is also adjusted, otherwise it takes matplotlib defaults (for 1x1-1x3 plots)
-    For all other parameters, only the figsize and no spacing is set
+    Return matplotlib fig, axes instance for single plot. 
+    Adjusted sizes (font etc) have to be set in the plt.rcParams, not locally on the axes object
+      e.g. with the "rc_default" function in this module
+    The plot of the exported figure with fig.savefig() is exactly of size  6x5 cm. DO NOTE USE THE OPTION "bbox_inches" 
+    If the width/height of the plot is to be adjusted, use x_stretch or "ystretch"
+    The resulting figure size will be printed in terminal (in centimeteres)
+    EXAMPLE:
+    --------
+    fig, ax = default_plot( y_stretch = 6/5)
+    will return a plot of size 6x6 (default x=6, y=5 * 6/5) (figsize is larger, printed to stdout)
     
-    Parameters, optional:
-    ---------------------
-    n_row:      int, default: 1
-                number of rows for the subplot 
-    n_col:      int, default: 1
-                number of columns for the subplot 
-    figsize:    list like of floats, default: None
-                Set the figsize of the subplots
-    **kwargs:   keyworded arguments
-                arguments which will be put into the plt.subplots(**kwargs) call 
+    Parameters:
+    -----------
+    n_row:          int, default 1
+                    how many rows of subplots should be returned
+    n_column:       int, default 1
+                    how many columns of subplots should be returned
+    x_stretch:      float, default 1
+                    stretch of each plot in x direction (size adjustment)
+    y_stretch:      float, default 1
+                    stretch of each plot in y direction (size adjustment)
+    **kwargs:       dict
+                    input kwargs for plt.subplots( **kwargs), NO GUARANTEES MADE (YET)
+
     Returns:
     --------
-    fig:        plt.figure object
-                figure handle for plot
-    axes:       plt.axes object or np.ndarray of axes object
-                axes object for each subplot 
+    fig:            matplotlib.pyplot figure object
+                    figure handle for the specified plot
+    axes:           matplotlib.pyplot axes object
+                    axes handle for the specified plot 
     """
+    cm_conversion = 2.3824 #factor that the specified width/height is given in cm
+    
+    ## default spacings
+    x_pad = 0.03 #flaoting space right of the subplot
+    y_pad = 0.105 #floating space at the top of the subplot (space for title basically)
+    x_offset = 0.2 
+    y_offset = 0.145
+    
+    
+    ## space adjustment for different fontsizes
+    default_labelsize = 9 #NOTE HARD WIRED AS A REFERENCE (DOES NOT HAVE TO MATCH "plt_templates" OR YOUR LOCAL "plt.rcParams"
+    default_fontsize = 11.7
+    #considering the ticksize
+    x_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.053  #yticks
+    y_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.030  #xticks
+    # consideration of labels and title
+    x_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.035 #ylabel
+    y_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.030 #xlabel
+    y_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.047 #title
+    x_offset = x_offset/n_column /x_stretch
+    y_offset = y_offset/n_row /y_stretch
+    
+    ## size of the ax and figure
+    default_axwidth = 0.97 /n_column  
+    default_axheight = 0.895 / n_row
+    required_axwidth =  default_axwidth - x_offset 
+    required_axheight = default_axheight - y_offset
+    additional_width = default_axwidth/required_axwidth
+    additional_height = default_axheight/required_axheight
+    required_width =   6 /default_axwidth   *x_stretch *additional_width  / cm_conversion
+    required_height =  5 /default_axheight  *y_stretch *additional_height / cm_conversion
+    
+    ax_position = np.zeros( (n_row, n_column), dtype=object )
+    for i in range( n_row):
+        for j in range( n_column):
+            ax_position[i,j] =  [ x_offset + ( default_axwidth + x_pad/n_column )*j, y_offset +(default_axheight+y_pad/n_row )*i, required_axwidth, required_axheight ]  
+    
+    ## setting of figure and axes object
+    fig, axes = plt.subplots( n_row,n_column)
+    fig.canvas.draw()
+    fig.set_constrained_layout(False)
+    fig.set_size_inches( required_width, required_height)
 
-    if figsize is None:
-        if n_col == 1 and n_row == 1:
-            figsize = [ 6/2.54, 5/2.54] ###matplotlib kann nur inches, deswegen muss man hier für CM teilen
-        elif n_col == 2 and n_row == 1:
-            figsize = [ 12/2.54, 5/2,54 ]
-            #fig.subplots.adjust( wspace=xx) #TODO adjust the spacing between the plots
-        elif n_col == 3 and n_row == 1:
-            figsize = [ 15/2.54, 5/2,54 ]
-
-        else:
-            figsize = [ 6*n_col/2.54, 5*n_row/2.54 ]
-            if n_row > 3 or n_col > 3:
-                print( '############### WARNING ###############\nfigsize set by default to {}, for more than 3 rows/columns in the plot could be ugly'.format( figsize) )
-
-    fig, axes = plt.subplots( n_row, n_col, figsize=figsize, **kwargs)
-    return fig, axes
+    if n_column == 1 and n_row == 1:
+        axes = np.array( [[axes]] )
+    elif n_column == 1 and n_row !=1:
+        axes = axes[:,None]
+    elif n_column != 1 and n_row ==1:
+        axes = axes[None,:]
+    for i in range( n_row):
+        for j in range( n_column):
+            axes[i,j].set_position( ax_position[i,j] )
+    print( 'Size of the full figure:', round(required_width*cm_conversion,3), 'x', round( required_height*cm_conversion, 3), '[cm]' )
+    if n_column == 1 and n_row == 1:
+        return fig, axes[0][0]
+    else:
+        return fig, axes.squeeze()
 
 
 def set_titles( axes, *titles):
@@ -157,65 +213,128 @@ def set_titles( axes, *titles):
 
 
 
-def add_legend( ax, position='top_right', opacity=0.5, **kwargs):
+def add_legend( ax, position='top right', opacity=0.8, **kwargs):
     """
-    adds a legend to the handed axes object. default position of it is top right, the center is denoted by positon=(0.5, 0.5), the relative position with a tuple/list contianing floats is pretty striaght forward
+    Add a legend to the specified ax object. Kwargs do overwrite parameters in plt.rcParams
+    Parameters:
+    -----------
+    ax:         plt.axes object
+                axes in which the legend should be added
+
+    position:   string, default 'top right'
+                set the legend in a specified corner ( 'top/upper or bot/lower left/right', has a space in the string
+    opacity.    float, default 0.8
+                opacity of the legend box
+    **kwargs    unpacked dictionary
+                additional parameters to customize the legend, e.g.
+                linewidth or lw
+                handlelength, handletextpad, labelspacing
+                edgecolor, facecolor, fancybox, shadow
     """
-    defaults = dict( loc='center', bbox_to_anchor=(0.15, 0.9), fontsize=15, facecolor=uniSgray(), edgecolor=uniSblue() )
-    if position==tuple or position==list:
-        defaults['bbox_to_anchor']= position
-    elif position==str:
-        if position == 'top_left':
-            relative_position=(0.15,0.85)
-        if position == 'bot_left':
-            relative_position=(0.15,0.15)
-        elif position == 'top_right':
-            relative_position=(0.85,0.85)
-        elif position == 'bot right':
-            relative_position=(0.85,0.15)
-        elif position == 'center_right':
-            relative_position=(0.85,0.5)
-        elif position == 'bot_mid':
-            relative_position=(0.5,0.85)
-        defaults['bbox_to_anchor']=relative_position
+    defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
+                      fancybox=False, #shadow=True,  #shadow and opacity dont mix well
+                      edgecolor=CDColor('uniSblue'), facecolor=CDColor('uniSgray80'), framealpha=opacity ) 
+    if position == 'bot left' or position=='lower left':
+        defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
+    elif position == 'top left' or position=='upper left':
+        defaults.update( dict( loc='upper left', bbox_to_anchor=(-0.01,1.015) ) )
+    elif position == 'top right' or position=='upper right':
+        defaults.update( dict( loc='upper right', bbox_to_anchor=(1.005, 1.015) )  )
+    elif position == 'bot right' or position=='lower right':
+        defaults.update( dict( loc='lower right', bbox_to_anchor=(1.005, -0.010) )  )
     style= {**defaults, **kwargs} #overwrites the defaults by the kwargs
     key = ax.legend(**style)
-    key.get_frame().set_linewidth( 5) 
+    key.get_frame().set_linewidth( 1.0) 
     if 'linewidth' in kwargs or 'lw' in kwargs:
         try: 
             key.get_frame().set_linewidth( kwargs['linewidth']) 
         except:
             key.get_frame().set_linewidth( kwargs['lw']) 
         finally:
-            print( 'wrong format of linewidth specified, returns to the default')
-
+            print( 'wrong format of linewidth specified, returns to the default') 
     return ax
 
 
-def axis_labels( ax, xlabel, ylabel, fontsize=16, **kwargs):
+def axis_labels( ax, xlabel, ylabel, **kwargs):
     """
     Set the x and y label for a given ax object
+    Parameters:
+    -----------
+    ax:         plt.axes object
+                axes handle of the current plot
+    xlabel:     string
+                xlabel to set
+    ylabel:     string
+                ylabel to set
+    **kwargs:   unpacked dict
+                kwargs passed to ax.set_?label( **kwargs)
+    Returns:
+    --------
+    ax          plt.axes object
+                axes handle with the added labels
     """
-    ax.set_xlabel(xlabel, size=fontsize, **kwargs)
-    ax.set_ylabel(ylabel, size=fontsize, **kwargs)
+    ax.set_xlabel(xlabel, **kwargs)
+    ax.set_ylabel(ylabel, **kwargs)
     return ax
 
 
-def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
-    """ 
-    adds a grey horizontal line at ymin and ymax
-    input:  ax - axes object of current figure
-            minvals [0,1] - value of first line to plot, default 0
-            maxvals [0,1] - value of second line to plot, default 1
-    returns: ax - axes object with additional lines
+
+####################  DEPECRATED ####################  DEPECRATED ####################  DEPECRATED ####################
+def exact_figsize( x_stretch=1, y_stretch=1, **kwargs):
     """
-    if horizontal:
-        ax.axhline(minval, color='#AAAAAA', linewidth=3)
-        ax.axhline(maxval, color='#AAAAAA', linewidth=3)
-    else:
-        ax.axvline(minval, color='#AAAAAA', linewidth=3)
-        ax.axvline(maxval, color='#AAAAAA', linewidth=3)
-    return ax
+    Return matplotlib fig, axes instance for single plot. 
+    adjusted sizes (font etc) have to be set in the plt.rcParams, not locally on the axes object
+      e.g. with the "rc_default" function in this module
+    The exported figure with fig.savefig() is exactly of size  6x5 cm. DO NOTE USE THE OPTION "bbox_inches" 
+    
+    Parameters:
+    -----------
+    x_stretch:      float, default 1
+                    stretch of the figure in x direction (size adjustment)
+    y_stretch:      float, default 1
+                    stretch of the figure in y direction (size adjustment)
+    **kwargs:       dict
+                    input kwargs for plt.subplots( **kwargs), NO GUARANTEES MADE (YET)
+
+    Returns:
+    --------
+    fig:            matplotlib.pyplot figure object
+                    figure handle for the specified plot
+    axes:           matplotlib.pyplot axes object
+                    axes handle for the specified plot 
+    """
+
+    ## fig adjustment
+    cm_conversion = 2.3824 #factor that the specified width/height is given in cm
+    width = 6/cm_conversion * x_stretch
+    height = 5/cm_conversion *y_stretch
+
+    fig, ax = plt.subplots( **kwargs)
+    fig.canvas.draw()
+    fig.set_constrained_layout(False)
+    fig.set_size_inches( width, height) #test if the figure is exactly this size
+
+    ## ax adjustment
+    ## Parameters adjusting the plot-box based on defined rcParams
+    default_ticksize = 9
+    default_fontsize = 11.7
+    offset = (plt.rcParams['xtick.ticksize']/ default_ticksize -1) * 0.13
+    offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.13
+    title_offset  = (plt.rcParams['font.size']/ default_fontsize-1 )* 0.19
+    ystretch_offset = 0.2 * (y_stretch -1)
+    xstretch_offset = 0.2 * (x_stretch -1)
+    x_correction = 0.1 * (x_stretch -1)
+    y_correction = 0.1 * (y_stretch -1)
+    x_offset = offset - xstretch_offset
+    y_offset = offset - ystretch_offset
+
+    ## ax position actually given in percentages (mi
+    ax_position = [0.58 + x_offset, 0.44 + y_offset, 1.69 - x_offset + x_correction, 1.64 - y_offset + y_correction - title_offset ]
+    print( 'specified ax position:', np.array(ax_position)/cm_conversion)
+    ax.set_position( np.array( ax_position)/cm_conversion )
+    
+    return fig, ax 
+
 
 
 def set_grid( ax, lw=2.5, ls=':', color='#AAAAAA'):
@@ -223,7 +342,7 @@ def set_grid( ax, lw=2.5, ls=':', color='#AAAAAA'):
     """
     Set a grid to the given axes object
     
-    Paremters:
+    Paramters:
     ----------
     ax:     plt.axes object
             current axes object to add the grid in
@@ -241,4 +360,22 @@ def set_grid( ax, lw=2.5, ls=':', color='#AAAAAA'):
             axes object with added grid
     """
     ax.grid( linewidth=2.5, color='#AAAAAA', linestyle=':' )
+    return ax
+
+
+def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
+    ##(THIS FUNCTION IS PROLLY NOT REQUIRED)
+    """ 
+    adds a grey horizontal line at ymin and ymax
+    input:  ax - axes object of current figure
+            minvals [0,1] - value of first line to plot, default 0
+            maxvals [0,1] - value of second line to plot, default 1
+    returns: ax - axes object with additional lines
+    """
+    if horizontal:
+        ax.axhline(minval, color='#AAAAAA', linewidth=3)
+        ax.axhline(maxval, color='#AAAAAA', linewidth=3)
+    else:
+        ax.axvline(minval, color='#AAAAAA', linewidth=3)
+        ax.axvline(maxval, color='#AAAAAA', linewidth=3)
     return ax

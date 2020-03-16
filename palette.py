@@ -40,50 +40,52 @@ def CDColor( color_name='uniSblue'):
     - uniSgray90
     """
 
-    if( color_name == 'uniSblue' ):
-        return '#004191'
-    if( color_name == 'uniSlightblue'  or color_name == 'uniSlblue' ):
-        return '#00beff'
-    if( color_name == 'uniSmagenta' ):
-        return '#ec008d'
-    if( color_name == 'uniSgreen' ):
-        return '#8dc63f'
-    if( color_name == 'uniSred' ):
-        return '#ee1c25'
-    if( color_name == 'uniSyellow' ):
-        return '#ffdd00'
-    if( color_name == 'uniSgray' ):
-        return '#323232'
-    if( color_name == 'uniSgray10' or color_name == 'uniSgrey10' ):
-        return '#51575e'
-    if( color_name == 'uniSgray20' or color_name == 'uniSgrey20' ):
-        return '#656970'
-    if( color_name == 'uniSgray30' or color_name == 'uniSgrey30' ):
-        return '#787c82'
-    if( color_name == 'uniSgray40' or color_name == 'uniSgrey40' ):
-        return '#8b8f94'
-    if( color_name == 'uniSgray50' or color_name == 'uniSgrey50' ):
-        return '#9fa1a5'
-    if( color_name == 'uniSgray60' or color_name == 'uniSgrey60' ):
-        return '#b2b4b7'
-    if( color_name == 'uniSgray70' or color_name == 'uniSgrey70' ):
-        return '#c5c7c9'
-    if( color_name == 'uniSgray80' or color_name == 'uniSgrey80' ):
-        return '#d8dadb'
-    if( color_name == 'uniSgray90' or color_name == 'uniSgrey90' ):
-        return '#ececed' 
-    if( color_name == 'uniSblue80' ):
-        return '#3367a7'
-    if( color_name == 'uniSblue60' ):
-        return '#668dbd'
-    if( color_name == 'uniSblue40' ):
-        return '#99b3d3'
-    if( color_name == 'uniSlblue80' or color_name == 'uniSlightblue80' ):
-        return '#33cbff'
-    if( color_name == 'uniSlblue60' or color_name == 'uniSlightblue60' ):
-        return '#66d8ff'
-    if( color_name == 'uniSlblue40' or color_name == 'uniSlightblue40' ):
-        return '#99e5ff'
+    color_name = color_name.lower()
+    ### left case insensitive match                                          ## case sensitive match (if Felix wants it)
+    if( color_name == 'unisblue' ):                                          #if( color_name == 'uniSblue' ):
+        return '#004191'                                                     #    return '#004191'
+    if( color_name == 'unislightblue'  or color_name == 'unislblue' ):       #if( color_name == 'uniSlightblue'  or color_name == 'uniSlblue' ):
+        return '#00beff'                                                     #    return '#00beff'
+    if( color_name == 'unismagenta' ):                                       #if( color_name == 'uniSmagenta' ):
+        return '#ec008d'                                                     #    return '#ec008d'
+    if( color_name == 'unisgreen' ):                                         #if( color_name == 'uniSgreen' ):
+        return '#8dc63f'                                                     #    return '#8dc63f'
+    if( color_name == 'unisred' ):                                           #if( color_name == 'uniSred' ):
+        return '#ee1c25'                                                     #    return '#ee1c25'
+    if( color_name == 'unisyellow' ):                                        #if( color_name == 'uniSyellow' ):
+        return '#ffdd00'                                                     #    return '#ffdd00'
+    if( color_name == 'unisgray' ):                                          #if( color_name == 'uniSgray' ):
+        return '#323232'                                                     #    return '#323232'
+    if( color_name == 'unisgray10' or color_name == 'unisgrey10' ):          #if( color_name == 'uniSgray10' or color_name == 'uniSgrey10' ):
+        return '#51575e'                                                     #    return '#51575e'
+    if( color_name == 'unisgray20' or color_name == 'unisgrey20' ):          #if( color_name == 'uniSgray20' or color_name == 'uniSgrey20' ):
+        return '#656970'                                                     #    return '#656970'
+    if( color_name == 'unisgray30' or color_name == 'unisgrey30' ):          #if( color_name == 'uniSgray30' or color_name == 'uniSgrey30' ):
+        return '#787c82'                                                     #    return '#787c82'
+    if( color_name == 'unisgray40' or color_name == 'unisgrey40' ):          #if( color_name == 'uniSgray40' or color_name == 'uniSgrey40' ):
+        return '#8b8f94'                                                     #    return '#8b8f94'
+    if( color_name == 'unisgray50' or color_name == 'unisgrey50' ):          #if( color_name == 'uniSgray50' or color_name == 'uniSgrey50' ):
+        return '#9fa1a5'                                                     #    return '#9fa1a5'
+    if( color_name == 'unisgray60' or color_name == 'unisgrey60' ):          #if( color_name == 'uniSgray60' or color_name == 'uniSgrey60' ):
+        return '#b2b4b7'                                                     #    return '#b2b4b7'
+    if( color_name == 'unisgray70' or color_name == 'unisgrey70' ):          #if( color_name == 'uniSgray70' or color_name == 'uniSgrey70' ):
+        return '#c5c7c9'                                                     #    return '#c5c7c9'
+    if( color_name == 'unisgray80' or color_name == 'unisgrey80' ):          #if( color_name == 'uniSgray80' or color_name == 'uniSgrey80' ):
+        return '#d8dadb'                                                     #    return '#d8dadb'
+    if( color_name == 'unisgray90' or color_name == 'unisgrey90' ):          #if( color_name == 'uniSgray90' or color_name == 'uniSgrey90' ):
+        return '#ececed'                                                     #    return '#ececed' 
+    if( color_name == 'unisblue80' ):                                        #if( color_name == 'uniSblue80' ):
+        return '#3367a7'                                                     #    return '#3367a7'
+    if( color_name == 'unisblue60' ):                                        #if( color_name == 'uniSblue60' ):
+        return '#668dbd'                                                     #    return '#668dbd'
+    if( color_name == 'unisblue40' ):                                        #if( color_name == 'uniSblue40' ):
+        return '#99b3d3'                                                     #    return '#99b3d3'
+    if( color_name == 'unislblue80' or color_name == 'unislightblue80' ):    #if( color_name == 'uniSlblue80' or color_name == 'uniSlightblue80' ):
+        return '#33cbff'                                                     #    return '#33cbff'
+    if( color_name == 'unislblue60' or color_name == 'unislightblue60' ):    #if( color_name == 'uniSlblue60' or color_name == 'uniSlightblue60' ):
+        return '#66d8ff'                                                     #    return '#66d8ff'
+    if( color_name == 'unislblue40' or color_name == 'unislightblue40' ):    #if( color_name == 'uniSlblue40' or color_name == 'uniSlightblue40' ):
+        return '#99e5ff'                                                     #    return '#99e5ff'
 
 
 
