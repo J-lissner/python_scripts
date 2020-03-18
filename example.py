@@ -6,10 +6,10 @@ import plt_templates as template
 ls = template.linestyles()
 dashed_lines = template.linestyles( ls='--', marker='x', mfc='yellow')
 ## adjustable parameters (which will affect figure size) (TRY IT OUT)
-fontsize = 11.7 
-ticksize = 9
+fontsize = 11.7 # default fontsize
+ticksize = 9    # default ticksize
 x_stretch = 6/6 # plot box is exactly 6cm wide, can be adjusted to be 7cm by e.g. x_stretch=7/6
-y_stretch = 5/5 #analogue to x-stretch
+y_stretch = 5/5 # analogue to x-stretch
 
 
 plt.rcParams.update( template.rc_default( fontsize, ticksize) )

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from palette import *
 
 import matplotlib.font_manager as fm
-print( '"import plt_templates..." Default parameters for matplotlib.pyplot have to be updated, use "plt.rcParams.update( plt_templates.rc_default)"')
+print( '"import plt_templates..." Default parameters for matplotlib.pyplot have to be updated, use "plt.rcParams.update( plt_templates.rc_default())"')
 
 def linestyles( lw=3, ls='-', **kwargs):
     """
