@@ -4,24 +4,23 @@ from palette import *
 import matplotlib.font_manager as fm
 print( '"import plt_templates..." Default parameters for matplotlib.pyplot have to be updated, use "plt.rcParams.update( plt_templates.rc_default())"')
 
-def linestyles( lw=3, ls='-', **kwargs):
+def linestyles( *args, **kwargs):
     """
     Pre defined linecolors given in a list, for each entry in the list there is one color
     The corporate colors are given in this order:
     blue, lightblue, green, magenate, gray, red, yellow
 
     can be used by e.g. plt.plot( x,y, **ls[0] )
-    The given input arguments modify the style for every line.
+    The given input arguments (args, kwargs) modify the style for every line.
+    The input arguments can be interpreted as plt.plot( x, y, *args, **kwargs)
 
     Parameters. optional:
     ---------------------
-    lw          float, default = 4
-                specified linewidth of all lines
-    ls          string, default = '-'
-                specified linestyle of all lines
-    **kwargs    dict
-                additional linestyles specified for each line 
-    To see the available options in kwargs and ls, see "help( plt.plot)" for reference
+    *args:      unpacked list
+                additional linestyles specified for each line via args
+    **kwargs:   unpacked dict
+                additional linestyles specified for each line via kwargs
+    To see the available options see "help( plt.plot)" for reference
 
     Returns:
     --------
@@ -30,13 +29,13 @@ def linestyles( lw=3, ls='-', **kwargs):
     """
 
     styles = []
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSblue'),    linestyle=ls, **kwargs ) ) # dark blue
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSlblue'),   linestyle=ls, **kwargs ) ) # light blue
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSgreen'),   linestyle=ls, **kwargs ) ) # green
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSmagenta'), linestyle=ls, **kwargs ) ) # magenta
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSgray'),    linestyle=ls, **kwargs ) ) # gray
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSred'),     linestyle=ls, **kwargs ) ) # red
-    styles.append( dict( linewidth=lw, color=CDColor( 'uniSyellow'),  linestyle=ls, **kwargs ) ) # yellow
+    styles.append( dict( *args, color=CDColor( 'uniSblue'),    **kwargs ) ) # dark blue
+    styles.append( dict( *args, color=CDColor( 'uniSlblue'),   **kwargs ) ) # light blue
+    styles.append( dict( *args, color=CDColor( 'uniSgreen'),   **kwargs ) ) # green
+    styles.append( dict( *args, color=CDColor( 'uniSmagenta'), **kwargs ) ) # magenta
+    styles.append( dict( *args, color=CDColor( 'uniSgray'),    **kwargs ) ) # gray
+    styles.append( dict( *args, color=CDColor( 'uniSred'),     **kwargs ) ) # red
+    styles.append( dict( *args, color=CDColor( 'uniSyellow'),  **kwargs ) ) # yellow
     return styles
 
 
@@ -83,8 +82,13 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kw
         default_params.update( { 'axes.grid':True, 'grid.color':'#AAAAAA', 'grid.linestyle':':', 'grid.linewidth':0.8 } )
     ## legend
     default_params.update( {'legend.fontsize': legend_fontsize } )
+    ## linewidth and scatter style
+    default_params.update( {'lines.linewidth': 2, 'lines.markeredgecolor': 'black' } )
+    default_params.update( { 'scatter.edgecolors': 'black', 'lines.markersize':4 } )
+    ## default color palette to be uniStuttgart colors (cycles for line AND scatterplot
+    default_params.update( {'axes.prop_cycle': plt.cycler('color', [CDColor('uniSblue'), CDColor('uniSmagenta'), CDColor('uniSgreen'), CDColor('uniSlblue'), CDColor('uniSgray30'), CDColor('uniSred'), CDColor('uniSyellow') ]) } )
 
-    default_params.update( **kwargs) 
+    default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
     return default_params
 
 def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
@@ -121,14 +125,14 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
                     axes handle for the specified plot 
     """
     cm_conversion = 2.3824 #factor that the specified width/height is given in cm
-    
+
     ## default spacings
     x_pad = 0.03 #flaoting space right of the subplot
     y_pad = 0.105 #floating space at the top of the subplot (space for title basically)
     x_offset = 0.2 
     y_offset = 0.145
-    
-    
+
+
     ## space adjustment for different fontsizes
     default_labelsize = 9 #NOTE HARD WIRED AS A REFERENCE (DOES NOT HAVE TO MATCH "plt_templates" OR YOUR LOCAL "plt.rcParams"
     default_fontsize = 11.7
@@ -141,7 +145,7 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     y_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.047 #title
     x_offset = x_offset/n_column /x_stretch
     y_offset = y_offset/n_row /y_stretch
-    
+
     ## size of the ax and figure
     default_axwidth = 0.97 /n_column  
     default_axheight = 0.895 / n_row
@@ -151,12 +155,12 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     additional_height = default_axheight/required_axheight
     required_width =   6 /default_axwidth   *x_stretch *additional_width  / cm_conversion
     required_height =  5 /default_axheight  *y_stretch *additional_height / cm_conversion
-    
+
     ax_position = np.zeros( (n_row, n_column), dtype=object )
     for i in range( n_row):
         for j in range( n_column):
             ax_position[i,j] =  [ x_offset + ( default_axwidth + x_pad/n_column )*j, y_offset +(default_axheight+y_pad/n_row )*i, required_axwidth, required_axheight ]  
-    
+
     ## setting of figure and axes object
     fig, axes = plt.subplots( n_row,n_column)
     fig.canvas.draw()
@@ -171,7 +175,7 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
         axes = axes[None,:]
     for i in range( n_row):
         for j in range( n_column):
-            axes[i,j].set_position( ax_position[i,j] )
+            axes[i,j].set_position( ax_position[-(i+1),j] )
     print( 'Size of the full figure:', round(required_width*cm_conversion,3), 'x', round( required_height*cm_conversion, 3), '[cm]' )
     if n_column == 1 and n_row == 1:
         return fig, axes[0][0]
@@ -182,7 +186,6 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
 def set_titles( axes, *titles):
     """
     Set the title of multiple axes objects in one function call
-
     Parameters:
     -----------
     axes:       plt.axes object or np.ndarray of axes objects
@@ -195,7 +198,6 @@ def set_titles( axes, *titles):
     axes:       plt.axes object or np.ndarray of axes objects
                 axes handles with set titles 
     """
-
     if isinstance( axes, np.ndarray):
         axes_shape = axes.shape
         if np.sum( axes.shape) != len( titles):
@@ -313,7 +315,6 @@ def exact_figsize( x_stretch=1, y_stretch=1, **kwargs):
     fig.canvas.draw()
     fig.set_constrained_layout(False)
     fig.set_size_inches( width, height) #test if the figure is exactly this size
-
     ## ax adjustment
     ## Parameters adjusting the plot-box based on defined rcParams
     default_ticksize = 9
@@ -327,7 +328,6 @@ def exact_figsize( x_stretch=1, y_stretch=1, **kwargs):
     y_correction = 0.1 * (y_stretch -1)
     x_offset = offset - xstretch_offset
     y_offset = offset - ystretch_offset
-
     ## ax position actually given in percentages (mi
     ax_position = [0.58 + x_offset, 0.44 + y_offset, 1.69 - x_offset + x_correction, 1.64 - y_offset + y_correction - title_offset ]
     print( 'specified ax position:', np.array(ax_position)/cm_conversion)
