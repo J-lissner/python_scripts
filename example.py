@@ -22,6 +22,7 @@ y.append( x[1]**2/ 20**2+1)
 y.append( np.sqrt( x[2] )/4+0.2 )
 
 
+## example on a single subplot using the predefined linestyles
 fig, ax = template.fixed_plot( x_stretch=x_stretch, y_stretch=y_stretch)
 ax.plot( x[0], y[0], label='log', **ls[0] )
 ax.plot( x[1], y[1], label='square', **ls[2] )
@@ -31,6 +32,7 @@ ax = template.axis_labels( ax, 'x [-]', 'y [-]' )
 ax.set_title( 'Some nonlinear functions')
 fig.savefig( 'functions.pdf')
 
+## example on multiple subplots with legend position and stretch (size specification)
 x_stretch = 7/6 
 y_stretch = 4/5 
 label_location= [ 'bot left', 'top left', 'upper right', 'lower right' ]
@@ -45,3 +47,16 @@ for ax in axes.flatten():
     ax.set_title( 'Some nonlinear functions')
     i += 1
 fig.savefig( 'multiplots.pdf')
+
+
+## example on the default color palette ( CDColors() )
+n_lines = 10
+x = [0,0.3, 0.6, 1]
+y = np.vstack( len(x)*[np.arange( 1, -1- 2/n_lines, -2/n_lines ) ] )
+fig, ax = template.fixed_plot()
+for i in range(n_lines):
+    ax.plot( x, y[:,i], marker='o', label='{}th line'.format( i) )
+ax = template.add_legend( ax, 'bot right') 
+ax.set_xlim( xmax=1.9)
+ax.set_title('default colors')
+fig.savefig( 'default_colors.pdf' )
