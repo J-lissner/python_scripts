@@ -86,7 +86,7 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kw
     default_params.update( {'lines.linewidth': 2, 'lines.markeredgecolor': 'black' } )
     default_params.update( { 'scatter.edgecolors': 'black', 'lines.markersize':4 } )
     ## default color palette to be uniStuttgart colors (cycles for line AND scatterplot
-    default_params.update( {'axes.prop_cycle': plt.cycler('color', [CDColor('uniSblue'), CDColor('uniSmagenta'), CDColor('uniSgreen'), CDColor('uniSlblue'), CDColor('uniSgray30'), CDColor('uniSred'), CDColor('uniSyellow') ]) } )
+    default_params.update( {'axes.prop_cycle': plt.cycler('color', [CDColor('uniSlblue'), CDColor('uniSmagenta'), CDColor('uniSgreen'), CDColor('uniSblue'), CDColor('uniSgray30'), CDColor('uniSred'), CDColor('uniSyellow') ]) } )
 
     default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
     return default_params
