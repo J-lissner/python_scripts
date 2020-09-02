@@ -1,4 +1,6 @@
 import matplotlib.pyplot as plt
+import sys
+sys.path.append('plt_template/')
 from palette import *
 
 import matplotlib.font_manager as fm
