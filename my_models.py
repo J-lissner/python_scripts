@@ -93,6 +93,92 @@ class ReconstructedANN( Model):
     def predict( self, x):
         return self.call( x, training=False)
 
+############ Bayesian Neural Networks (BNN) ##############
+
+class BayesianNN( Model):
+    """
+    Constructs a Bayesian Neural Network (without any dropout or batch normalization, TODO) 
+    The penultimate layer has 'tanh' activation (for small NNs, linear and other non-linear activations did not result in sensible training)
+    The output of this model is of type tensorflow_probability.distribution. (Look into tfp docs for more methods and attributes)
+    """
+    def __init__(self, n_output,  KLD_func, n_neuron=[6,7], activation=['selu', 'selu'], *args, **kwargs): 
+        """
+        Parameters:
+        ---------------------
+        n_output:       int
+                        number of output neurons of the model
+        
+        KLD_func:       lambda function
+                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size
+
+        n_neurons:      list of ints
+                        no. of neurons in hidden layer (excl. input and output layers)
+
+        activation:     list of strings
+                        activation of each layer. Length has to match "hidden_neurons"
+
+
+        """
+        super( BayesianNN, self).__init__()
+        self.architecture = []
+        for i in range( len( n_neuron) ):
+            self.architecture.append( tfpl.DenseFlipout( n_neuron[i], activation=activation[i], dtype='float64', 
+                                                         kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
+                                                         bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
+                                                         bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
+        self.architecture.append( tfpl.DenseFlipout( 2*n_output, activation='tanh', dtype='float64',
+                                                     kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
+                                                     bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
+                                                     bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
+        self.architecture.append( tfpl.DistributionLambda( make_distribution_fn=lambda params: tfd.Normal(loc=params[...,:n_output],
+                                                           scale= 1e-3 + tf.abs(params[...,n_output:])), dtype='float64' )) 
+
+    def call(self, x, training=False):
+        for layer in self.architecture:
+            x = layer(x)
+        return x
+
+    def predict_validation( self, x):
+        return self.call( x, training=False)
+
+
+class NonBayesianNN( Model):
+    """
+    Non-Bayesian version of the Neural Network model defined above
+    """
+    def __init__(self, n_output, n_neuron=[6,7], activation=['selu', 'selu'], *args, **kwargs): 
+         """
+        Parameters:
+        ---------------------
+        n_output:       int
+                        number of output neurons of the model
+        
+        KLD_func:       lambda function
+                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size
+
+        n_neurons:      list of ints
+                        no. of neurons in hidden layer (excl. input and output layers)
+
+        activation:     list of strings
+                        activation of each layer. Length has to match "hidden_neurons"
+
+
+        """
+        super( NonBayesianNN, self).__init__()
+        self.architecture = []
+        for i in range( len( n_neuron) ):
+            self.architecture.append( Dense( n_neuron[i], activation=activation[i]))
+        
+        self.architecture.append( Dense( n_output, activation=None))
+        
+    def call(self, x, training=False):
+        for layer in self.architecture:
+            x = layer(x)
+        return x
+
+    def predict_validation( self, x):
+        return self.call( x, training=False)
+
 
 ############ BELOW HERE YOU WILL FIND ONLY TRASH WHICH WAS HERE FOR TESTING
 
