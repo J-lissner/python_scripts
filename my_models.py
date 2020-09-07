@@ -147,7 +147,7 @@ class NonBayesianNN( Model):
     Non-Bayesian version of the Neural Network model defined above
     """
     def __init__(self, n_output, n_neuron=[6,7], activation=['selu', 'selu'], *args, **kwargs): 
-         """
+        """
         Parameters:
         ---------------------
         n_output:       int
@@ -161,8 +161,6 @@ class NonBayesianNN( Model):
 
         activation:     list of strings
                         activation of each layer. Length has to match "hidden_neurons"
-
-
         """
         super( NonBayesianNN, self).__init__()
         self.architecture = []

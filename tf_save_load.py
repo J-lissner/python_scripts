@@ -161,7 +161,7 @@ class Saver():
                 code += '.py'
             if os.path.isfile( code):
                 codefile.write( code )
-            elif os.path.isfile( self.script_path + code)
+            elif os.path.isfile( self.script_path + code):
                 print( 'file was not found, read from default path of scripts:', self.script_path )
                 codefile.write( self.script_path + code )
             else:
