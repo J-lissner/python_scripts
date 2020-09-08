@@ -219,7 +219,7 @@ def split_data( inputs, outputs, split=0.3, shuffle=True):
         y_valid = outputs[ shuffle,:][n_train:,:]
         return x_train, y_train, x_valid, y_valid
     else:
-        return inputs[:n_train,:], inputs[n_train:,:], outputs[:n_train,:], outputs[n_train:,:]
+        return inputs[:n_train,:], outputs[:n_train,:], inputs[n_train:,:], outputs[n_train:,:]
 
 def scale_data( data, slave_data=None, scaletype='single_std1'):
     """
