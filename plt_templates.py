@@ -185,7 +185,7 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
         return fig, axes.squeeze()
 
 
-def set_titles( axes, *titles):
+def set_titles( axes, *titles, **kwargs ):
     """
     Set the title of multiple axes objects in one function call
     Parameters:
@@ -194,6 +194,8 @@ def set_titles( axes, *titles):
                 axes handles on which the titles should be added
     *titles:    strings
                 multiple strings for the titles, should be as many titles as there are axes handles given
+    **kwargs:   dict
+                formatting kwargs for the title                
 
     Returns:
     --------
@@ -206,11 +208,11 @@ def set_titles( axes, *titles):
             print( "################### WARNING #####################\nmismatching number of titles and axes objects given, matching the first 'n axes' with first 'n titles' " )
         axes = axes.flatten()
         for i in range( np.min( (len( titles), len(axes) )) ):
-            axes[i].set_title( titles[i] )
+            axes[i].set_title( titles[i], **kwargs )
         axes = axes.reshape( axes_shape)
     else:
         try:
-            axes.set_title( titles)
+            axes.set_title( titles, **kwargs)
         except:
             print( "################### WARNING #####################\n title for single axes object could not be set, returning axes with no title added" )
     return axes
