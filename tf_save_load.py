@@ -181,22 +181,20 @@ class Loader():
         with open( '{}/model_name.pkl'.format( self.path), 'rb') as string_file:
             model_name = pickle.load( string_file)
         model_code = '{}/custom_model'.format( self.path).replace('/','.') 
-        model_code = getattr( import_module( model_code), model_name)
+        model_code = getattr( import_module( model_code), model_name) 
 
         try:
             with open( '{}/init_args.pkl'.format( self.path), 'rb') as pklfile:
                 args = pickle.load( pklfile)
         except: 
             args = []
-            print( 'no "init_args" found in the saved folder, contuniong without loading any')
-
+            print( 'no "init_args" found in the saved folder, contuniong without loading any') 
         try:
             with open( '{}/init_kwargs.pkl'.format( self.path), 'rb') as pklfile:
                 kwargs = pickle.load( pklfile)
         except: 
             kwargs = {}
-            print( 'no "init_kwargs" found in the saved folder, contuniong without loading any')
-
+            print( 'no "init_kwargs" found in the saved folder, contuniong without loading any') 
         model = model_code( *args, **kwargs)
         model.load_weights( '{}/weights/'.format( self.path) )
         return model
