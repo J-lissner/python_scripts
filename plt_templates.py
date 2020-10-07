@@ -2,7 +2,8 @@ import matplotlib.pyplot as plt
 from palette import *
 
 import matplotlib.font_manager as fm
-print( '"import plt_templates..." Default parameters for matplotlib.pyplot have to be updated, use "plt.rcParams.update( plt_templates.rc_default())"')
+print( '"import plt_templates..." Default parameters for matplotlib.pyplot ",\
+      have to be updated, use "plt.rcParams.update( plt_templates.rc_default())"')
 
 def linestyles( *args, **kwargs):
     """
@@ -39,7 +40,8 @@ def linestyles( *args, **kwargs):
     return styles
 
 
-def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kwargs):
+def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
+               axis_label_size=None, use_tex=True, grid=True, **kwargs):
     """
     Gives some default parameters set for a nice plot layout
     This function is to be used in the main as "plt.rcParams.update( rc_default() )"
@@ -66,7 +68,7 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kw
     ## Font and text specification
     try:
         uni_font = [ font for font in fm.findSystemFonts() if ('UniversforUniS65Bd-Regular.ttf' in font ) ][0]
-        default_params.update( { 'font.family':uni_font, 'text.usetex':True } )
+        default_params.update( { 'font.family':uni_font, 'text.usetex':use_tex } )
     except:
         print( 'Uni stuttgart font not installed, continuing with default font' )
     default_params.update( { 'font.size':fontsize} )
@@ -75,6 +77,8 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, grid=True, **kw
     ## layout of the figure, sizes
     default_params.update( {'axes.linewidth': 1.3 } )
     default_params.update( {'axes.titlepad':3} ) 
+    if( axis_label_size):
+        default_params.update( {'axes.labelsize':axis_label_size} ) 
     default_params.update( {'xtick.major.pad':1.5, 'ytick.major.pad':1.5 } )
     default_params.update( {'xtick.major.size':2.5, 'ytick.major.size':2.5} )
     ## Default Grid
@@ -378,4 +382,31 @@ def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
     else:
         ax.axvline(minval, color='#AAAAAA', linewidth=3)
         ax.axvline(maxval, color='#AAAAAA', linewidth=3)
+    return ax
+
+def layout(ax, title=None, titlesize=None, ticksize=None, gridstyle=None, \
+           legendstyle=None, axislabelsize=None ) :
+    """
+    Sets a default layout around the given plot in "ax"
+    Input: ax - axes object of current figure
+           OPTIONAL ARGUMENTS
+           title       - string; specified title to add
+           tiksize     - int;    size of tikz of x and y
+           gridstyle   - dict;   style of the grid
+           legendstyle - dict;   style of the legend
+    returns: ax - axes object with added layout
+    """
+    if gridstyle :
+        ax.grid(**gridstyle)
+    if legendstyle :
+        ax.legend(**legendstyle)
+    if ticksize :
+        ax.tick_params( labelsize=ticksize)
+    if axislabelsize :
+        plt.rc('axes', labelsize=axislabelsize )
+    if title :
+        if titlesize:
+            ax.set_title(title, fontsize=titlesize )
+        else:
+            ax.set_title(title)
     return ax
