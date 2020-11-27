@@ -1,7 +1,8 @@
-import matplotlib.pyplot as plt
-import sys
-sys.path.append('plt_template/')
-from palette import *
+import numpy as np
+import matplotlib.pyplot as plt 
+#import sys
+#sys.path.append('plt_template/')
+from palette import UniStuttgart as uniS
 
 import matplotlib.font_manager as fm
 print( '"import plt_templates..." Default parameters for matplotlib.pyplot ",\
@@ -32,13 +33,13 @@ def linestyles( *args, **kwargs):
     """
 
     styles = []
-    styles.append( dict( *args, color=CDColor( 'uniSblue'),    **kwargs ) ) # dark blue
-    styles.append( dict( *args, color=CDColor( 'uniSlblue'),   **kwargs ) ) # light blue
-    styles.append( dict( *args, color=CDColor( 'uniSgreen'),   **kwargs ) ) # green
-    styles.append( dict( *args, color=CDColor( 'uniSmagenta'), **kwargs ) ) # magenta
-    styles.append( dict( *args, color=CDColor( 'uniSgray'),    **kwargs ) ) # gray
-    styles.append( dict( *args, color=CDColor( 'uniSred'),     **kwargs ) ) # red
-    styles.append( dict( *args, color=CDColor( 'uniSyellow'),  **kwargs ) ) # yellow
+    styles.append( dict( *args, color=uniS.blue,    **kwargs ) ) # dark blue
+    styles.append( dict( *args, color=uniS.lblue,   **kwargs ) ) # light blue
+    styles.append( dict( *args, color=uniS.green,   **kwargs ) ) # green
+    styles.append( dict( *args, color=uniS.magenta, **kwargs ) ) # magenta
+    styles.append( dict( *args, color=uniS.gray,    **kwargs ) ) # gray
+    styles.append( dict( *args, color=uniS.red,     **kwargs ) ) # red
+    styles.append( dict( *args, color=uniS.yellow,  **kwargs ) ) # yellow
     return styles
 
 
@@ -92,7 +93,7 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
     default_params.update( {'lines.linewidth': 2, 'lines.markeredgecolor': 'black' } )
     default_params.update( { 'scatter.edgecolors': 'black', 'lines.markersize':4 } )
     ## default color palette to be uniStuttgart colors (cycles for line AND scatterplot
-    default_params.update( {'axes.prop_cycle': plt.cycler('color', [CDColor('uniSlblue'), CDColor('uniSmagenta'), CDColor('uniSgreen'), CDColor('uniSblue'), CDColor('uniSgray30'), CDColor('uniSred'), CDColor('uniSyellow') ]) } )
+    default_params.update( {'axes.prop_cycle': plt.cycler('color', [uniS.lblue, uniS.magenta, uniS.green, uniS.blue, uniS.gray30, uniS.red, uniS.yellow ]) } )
 
     default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
     return default_params
@@ -245,7 +246,7 @@ def add_legend( ax, position='top right', opacity=0.8, **kwargs):
     """
     defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
                       fancybox=False, #shadow=True,  #shadow and opacity dont mix well
-                      edgecolor=CDColor('uniSblue'), facecolor=CDColor('uniSgray80'), framealpha=opacity ) 
+                      edgecolor=uniS.blue, facecolor=uniS.gray80, framealpha=opacity ) 
     if isinstance( position, str):
         if position == 'bot left' or position=='lower left':
             defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )

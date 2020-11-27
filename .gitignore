@@ -2,3 +2,6 @@
 __pycache__/
 
 
+*.swp
+*.bak
+*.pdf
