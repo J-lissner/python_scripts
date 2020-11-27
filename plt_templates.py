@@ -233,6 +233,8 @@ def add_legend( ax, position='top right', opacity=0.8, **kwargs):
 
     position:   string, default 'top right'
                 set the legend in a specified corner ( 'top/upper or bot/lower left/right', has a space in the string
+                A dictionary is also accepted, should contain the keys to specify the position
+                (prefered is 'loc' and 'bbox_to_anchor')
     opacity.    float, default 0.8
                 opacity of the legend box
     **kwargs    unpacked dictionary
@@ -244,14 +246,21 @@ def add_legend( ax, position='top right', opacity=0.8, **kwargs):
     defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
                       fancybox=False, #shadow=True,  #shadow and opacity dont mix well
                       edgecolor=CDColor('uniSblue'), facecolor=CDColor('uniSgray80'), framealpha=opacity ) 
-    if position == 'bot left' or position=='lower left':
+    if isinstance( position, str):
+        if position == 'bot left' or position=='lower left':
+            defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
+        elif position == 'top left' or position=='upper left':
+            defaults.update( dict( loc='upper left', bbox_to_anchor=(-0.01,1.015) ) )
+        elif position == 'top right' or position=='upper right':
+            defaults.update( dict( loc='upper right', bbox_to_anchor=(1.005, 1.015) )  )
+        elif position == 'bot right' or position=='lower right':
+            defaults.update( dict( loc='lower right', bbox_to_anchor=(1.005, -0.010) )  )
+    elif isinstance( position, dict):
+        defaults.update( position)
+    else:
+        print( "Non allowed argument for 'position' in 'add_legend', setting default (top right) ")
         defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
-    elif position == 'top left' or position=='upper left':
-        defaults.update( dict( loc='upper left', bbox_to_anchor=(-0.01,1.015) ) )
-    elif position == 'top right' or position=='upper right':
-        defaults.update( dict( loc='upper right', bbox_to_anchor=(1.005, 1.015) )  )
-    elif position == 'bot right' or position=='lower right':
-        defaults.update( dict( loc='lower right', bbox_to_anchor=(1.005, -0.010) )  )
+
     style= {**defaults, **kwargs} #overwrites the defaults by the kwargs
     key = ax.legend(**style)
     key.get_frame().set_linewidth( 1.0) 
