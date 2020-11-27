@@ -248,6 +248,7 @@ def add_legend( ax, position='top right', opacity=0.8, **kwargs):
                       fancybox=False, #shadow=True,  #shadow and opacity dont mix well
                       edgecolor=uniS.blue, facecolor=uniS.gray80, framealpha=opacity ) 
     if isinstance( position, str):
+        position = position.replace( '_', ' ' )
         if position == 'bot left' or position=='lower left':
             defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
         elif position == 'top left' or position=='upper left':
