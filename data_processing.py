@@ -5,7 +5,7 @@ from math import ceil, floor
 
 #####################################AQUISITION AND TRANSFORMATION OF BINARY IMAGE DATA ###############################
 
-def load_datasets( n_snapshots, dataset_name='dset_{}', dataset_counter=0, specified_indices=None,  filename=None, hdf5_path='image_data'):
+def load_datasets( n_snapshots, dataset_counter=0, filename=None, **default_kwargs):
     """
     Load and vectorize multiple 3d RVE snapshots stored in a hdf5 file
     Puts the vectorized RVE into a column array (each column one RVE) and returns an array of size "resolution x n_snapshots"
@@ -13,16 +13,18 @@ def load_datasets( n_snapshots, dataset_name='dset_{}', dataset_counter=0, speci
     Parameters:
     -----------
     n_snapshots:        int
-                        number of vectorized snapshots to return
-
-    dataset_name:       parsing string, default "dset_{}"
-                        name of the RVE datasets in the hdf5 file
+                        number of vectorized snapshots to return 
     dataset_counter:    int, default 0
                         which RVE to return, returns the RVE "dset_0" until "dset_'n_snapshots'"
-    specified_indices:  list, default None
-                        If a list is given, "dataset_counter" is ommited and it only returns the RVE wit the requested number
     filename:           string, default None
                         path and name of the hdf5 file, defaults to "my dataverse" on emmawork2 (JL)
+
+    **default_kwargs:   keyworded arguments with default values
+                        The remaining values below denote the defaults. 
+    dataset_name:       parsing string, default "dset_{}"
+                        name of the RVE datasets in the hdf5 file
+    specified_indices:  list, default None
+                        If a list is given, "dataset_counter" is ommited and it only returns the RVE wit the requested number
     hdf5_path:          string, default "image_data"
                         Internal path to the snapshot data in the hdf5 file
 
@@ -32,12 +34,18 @@ def load_datasets( n_snapshots, dataset_name='dset_{}', dataset_counter=0, speci
                         loaded and vectorized RVE with each column one RVE (still returns a 2d-array on 1 RVE)
     """
     if filename is None:
-        filename = '/scratch/lissner/dataverse/3d_rve.h5'
+        filename = '/scratch/lissner/dataverse/3d_rve.h5' 
+    dataset_name = default_kwargs.pop( dataset_name, 'dset_{}' )
+    specified_indices = default_kwargs.pop( specified_indices, None )
+    hdf5_path = default_kwargs.pop( hdf5_path, 'image_data' )
+    if default_kwargs:
+        print( 'non specified default_kwargs given in "load_datasets", those are', default_kwargs.keys() )
+        print( 'continuing program, unexpected behaviour may occur!' )
+    
     h5file = h5py.File( filename, 'r')
     image_location = h5file[ hdf5_path ]
-
     snapshots = []
-    if not specified_indices is None: #return the images with the specified index
+    if specified_indices is not None: #return the images with the specified index
         for index in specified_indices:
             dataset = dataset_name.format( index)
             snapshots.append( image_location[ dataset][:].flatten() )
@@ -374,11 +382,40 @@ def batch_data( x, y, n_batches, shuffle=True):
     return batches
 
 
+
+def compute_error( true_value, predictions, scaling=None, convertScale=False, metric='mse'):
+    """
+    Compute the error between true value and predictions based on specified metric with/without scaling back to the real scale
+
+    INPUT(s):
+        true_value      : array of scaled true_value
+        predictions     : array of scaled predictions (or prediction means for bayesian NN)
+        convertScale    : boolean indicating whether the values are to be scaled to the real scale
+        scaling         : list with scaling info from data_processing.scale_data()
+        metric          : metric to be used to compute the error
+                            (a) 'mse' : Mean Squared Error
+                            (b)
+                            (c)
+    OUTPUT(s):
+        error           : scalar error value
+    # TODO rewrite a few things here
+    """
+    # Scaling back to the real scale
+    if convertScale:
+        true_value  = get.unscale_data(true_value,  scaling)
+        predictions = get.unscale_data(predictions, scaling)
+    # Computing error based on the metric
+    if metric=='mse':
+        error = np.square(np.subtract(true_value, predictions)).mean()
+
+    return error
+
+
 ####################################################################################################
 ### DEPECRATED BUT LEFT temporarily (only works for the 2d file with very specific formatting
 ### The function has been replaced by the "load_datasets" function for a more general saving format
 ####################################################################################################
-def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False):
+def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False, draw_random=True):
     """
     load in the snapshots, not really an elegant solution
     returns approximately n/2 random snapshots of each class (circle and rectangular)
@@ -391,8 +428,12 @@ def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False):
         n_circle         = ceil( n/2)
         n_rectangle      = floor( n/2)
         size_dataset     = raw_data['circle/image_data/dset_{}'.format( dset_nr) ].shape[1]
-        circle_index     = np.sort( np.random.permutation( size_dataset)[:n_circle] ) #to access hdf5 files the indices need to be sorted
-        rectangle_index  = np.sort( np.random.permutation( size_dataset)[:n_rectangle] ) #These statements are only useful if n/2 <= size_dataset
+        if draw_random:
+            circle_index     = np.sort( np.random.permutation( size_dataset)[:n_circle] ) #to access hdf5 files the indices need to be sorted
+            rectangle_index  = np.sort( np.random.permutation( size_dataset)[:n_rectangle] ) #These statements are only useful if n/2 <= size_dataset
+        else:
+            circle_index = slice( 0, n_circle)
+            rectangle_index = slice( 0, n_rectangle)
         if memory_efficient:
             circle_images    = raw_data['circle/image_data/dset_{}'.format( dset_nr) ][:,circle_index]
             rectangle_images = raw_data['rectangle/image_data/dset_{}'.format( dset_nr) ][:,rectangle_index]
