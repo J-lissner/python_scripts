@@ -174,10 +174,34 @@ class Loader():
     Documentation very similar to the saver object, is omitted for now
     """
     def __init__(self, savepath):
+        """ 
+        Initialize the Loader pointing to the direction where the model is stored.
+        Note that the Saver has to be correctly executed for the loader to work.
+        This must include 'Saver.code()'. All other saver functions are conditional
+        Parameters:
+        -----------
+        savepath:   string
+                    path to the folder where the Saver() dumped the objects
+        Returns:
+        --------
+        Loader:     instance of Loader object 
+                    Loader object to assemble the previously stored model
+        """
         self.path = savepath
 
 
     def model(self):
+        """
+        Return the model how it was saved. This accesses the saved 'Saver.code()' and
+        (optional) the 'Saver.inputs()'
+        Parameters:
+        -----------
+        None:       Already knows how to reassemble based on the Saver relation
+        Returns:
+        --------
+        Model:      restored instance of the user defined model
+                    restores the saved weights as well as the defined architecture
+        """
         with open( '{}/model_name.pkl'.format( self.path), 'rb') as string_file:
             model_name = pickle.load( string_file)
         model_code = '{}/custom_model'.format( self.path).replace('/','.') 
@@ -202,10 +226,23 @@ class Loader():
 
     def locals(self, tutorial=True):
         """
+        Restore the locally defined variables in the previous training.
+        This function requires additional code in the main file to work (see below)
+        If the code is executed, the local variables are usable 
+        as defined in the previous training.  
         how to restore the local variables:
         for key, value in Loader.locals( tutorial=False).items(): 
             exec(key + '=value')\n
         This will automatically assign all the previously saved variables\n
+        Parameters:
+        -----------
+        tutorial:   bool, default True
+                    If True, how to correctly restore the variables is printed
+                    to console
+        Returns:
+        --------
+        local_variables:    dict
+                            dictionary containing the 'variable'-'variable_value' pair
         """ 
         with open( '{}/local_kwargs.pkl'.format( self.path), 'rb') as pklfile:
             local_variables = pickle.load( pklfile)
@@ -225,12 +262,35 @@ class Loader():
 
 
     def scaling(self ):
+        """
+        Load the previously stored scalings for the data.
+        The scalings should be computed with the module 'data_processing' 
+        (the module is in the same git repository)
+        Parameters:
+        -----------
+        None:   The Loader refers to the Saver relation
+        Returns:
+        --------
+        scalings:   Dict
+                    Input and output scalings stored under the
+                    'input' and 'output' keys 
+        """
         with open( '{}/scalings.pkl'.format( self.path), 'rb') as pklfile:
             scalings = pickle.load( pklfile)
         return scalings
 
 
     def tracked_variables(self ):
+        """
+        Load additionally tracked variables after training
+        Parameters:
+        -----------
+        None:   The Loader refers to the Saver relation
+        Returns:
+        --------
+        tracked:    Dict
+                    Dictionary containing all the tracked variables
+        """
         with open( '{}/tracked_variables.pkl'.format( self.path), 'rb' ) as pklfile:
             track = pickle.load( pklfile)
         return track
