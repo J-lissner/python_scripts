@@ -47,7 +47,12 @@ class Saver():
         --------
         None:           stores files in the specified location
         """
-        self.script_path = '/home/lissner/scripts/python/tensorflow_functions/'
+        if script_path is None:
+            self.script_path = '/home/lissner/scripts/python/tensorflow_functions/'
+        else: 
+            self.script_path = script_path
+            if script_path[-1] != '/':
+                self.script_path = self.script_path + '/'
         self.savepath = savepath
 
         if name_of_code[-3:] != '.py':
