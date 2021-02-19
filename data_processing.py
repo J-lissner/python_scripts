@@ -197,7 +197,7 @@ def unscale_data( data, shift ):
     data:       numpy nd-array
                 unscaled data using 'scaling' 
     """
-    if scaling[2] in [ 'single_std1', 'combined_std1']:
+    if shift[2] in [ 'single_std1', 'combined_std1']:
         data = data / shift[1] + shift[0] 
     elif shift[2] == '0-1':
         data = data * shift[1] + shift[0] 
