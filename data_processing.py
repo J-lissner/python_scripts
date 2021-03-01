@@ -207,7 +207,8 @@ def unscale_data( data, shift ):
         print('No valid scaletype given, returning raw data' )
     return data
 
-def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, factory=False):
+
+def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
     """
     Generator/Factory function, yields 'n_batches' batches when called as
     a 'for loop' argument.  The last batch is the largest if the number of
@@ -228,8 +229,49 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, factory=False):
     stochastic:     float, default 0.5
                     if the data should be stochastically picked, has to be <=1
                     only available if <shuffle> is True
-    factory:        bool, default False
-                    if this function should work as a generator function
+    Returns:
+    -------
+    data_batches    list
+                    list of (x_batch, y_batch) pairs
+    """
+    n_samples = y.shape[0]
+    if shuffle:
+        permutation = np.random.permutation( n_samples )
+        x = x[ permutation]
+        y = y[ permutation]
+    else:
+        stochastic = 0
+    batchsize = int( n_samples // n_batches * (1-stochastic) )
+    max_sample = int( n_samples* (1-stochastic) )
+    i = -1 #to catch errors for n_batches == 1
+    batches = []
+    for i in range( n_batches-1):
+        batches.append( ( x[..., i*batchsize:(i+1)*batchsize], y[..., i*batchsize:(i+1)*batchsize] ))
+    batches.append( ( x[..., (i+1)*batchsize:max_sample ], y[..., (i+1)*batchsize:max_sample ] ))
+    return batches
+
+
+def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0):
+    """
+    Generator/Factory function, yields 'n_batches' batches when called as
+    a 'for loop' argument.  The last batch is the largest if the number of
+    samples is not integer divisible by 'n_batches' (the last batch is at
+    most 'n_batches-1' larger than the other batches)
+    Also enables a stochastic chosing of the training samples by ommiting
+    different random samples each epoch
+    Parameters:
+    -----------
+    x:              numpy array
+                    input data aranged column wise
+    y:              numpy array
+                    output data/target values aranged column wise
+    n_batches:      int
+                    number of batches to return
+    shuffle:        bool, default True
+                    If the data should be shuffled before batching
+    stochastic:     float, default 0.5
+                    if the data should be stochastically picked, has to be <=1
+                    only available if <shuffle> is True
     Yields:
     -------
     x_batch         numpy array
@@ -251,13 +293,6 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, factory=False):
         for i in range( n_batches-1):
             yield x[i*batchsize:(i+1)*batchsize], y[i*batchsize:(i+1)*batchsize]
         yield x[(i+1)*batchsize:max_sample ], y[(i+1)*batchsize:max_sample ]
-    else:
-        batches = []
-        for i in range( n_batches-1):
-            batches.append( x[..., i*batchsize:(i+1)*batchsize], y[..., i*batchsize:(i+1)*batchsize] )
-        batches.append( x[..., (i+1)*batchsize:max_sample ], y[..., (i+1)*batchsize:max_sample ] )
-        return batches
-
 
 
 def compute_error( true_value, predictions, scaling=None, convertScale=False, metric='mse'):
