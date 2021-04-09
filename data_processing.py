@@ -208,6 +208,81 @@ def unscale_data( data, shift ):
     return data
 
 
+class CrossValidation():
+    """
+    Implementation of the k-fold cross validation
+    Randomly shuffle the data and put the data into k-batches. If the 
+    data has been 'folded' k times, then it is reshuffled
+    CAREFUL: a copy of the full data is created inside this object, might
+    lead to memory issues!
+    -----------
+    How to use:
+    data_handler = CrossValidation( x, y, k)
+    del x, y
+    for i in range( n_epochs):
+        x_valid, y_valid = next( data_handler)
+        for x_train, y_train in data_handler:
+            #model training
+    """
+    def __init__( self, x, y, k=5 ):
+        """ 
+        Allocate variables and split the data into k-batches/folds
+        Parameters:
+        -----------
+        x:      torch.tensor like
+                input data aranged row wise (each row 1 sample)
+        y:      torch.tensor like
+                output data aranged row wise, must have the same number
+                of samples than x
+        k:      int, default 5
+                into how many folds to split the data, the fold size 
+                computes to n_samples/k
+        """
+        assert k > 1, 'error in CrossValidation, "k" must be larger than 1'
+        self.n_samples = y.shape[0]
+        self.batchsize = self.n_samples//k
+        self.k = k
+        self.x = x
+        self.y = y
+        self.shuffle_set() 
+    
+    def shuffle_set( self):
+        """ Randomly shuffle the data and put it into K sets """
+        permutation = np.random.permutation( self.n_samples )
+        self.x = self.x[ permutation]
+        self.y = self.y[ permutation]
+        self.batches = []
+        for i in range( self.k-1):
+            self.batches.append( (   self.x[i*self.batchsize:(i+1)*self.batchsize],
+                                     self.y[i*self.batchsize:(i+1)*self.batchsize] ))
+        self.batches.append( (  self.x[(i+1)*self.batchsize: ], 
+                                self.y[(i+1)*self.batchsize: ] ))
+        self.fold_counter = 0
+
+    def __next__( self):
+        """
+        Get the next fold and return the validation set
+        If K folds have been conducted, the set is reshuffled 
+        """
+        if self.fold_counter == 0:
+            self.current_val = self.batches.pop()
+        elif self.fold_counter < self.k:
+            self.batches.insert( 0, self.current_val)
+            self.current_val = self.batches.pop()
+        else: #fold_counter == k or folds
+            self.shuffle_set()
+            next(self)
+        self.fold_counter += 1
+        return self.current_val
+    
+    def __iter__( self):
+        """ Iterate over the remaining training set AFTER calling val_set = next(CrossValidation)"""
+        return iter( self.batches)
+
+
+
+
+
 def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
     """
     Generator/Factory function, yields 'n_batches' batches when called as
@@ -219,9 +294,9 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
     Parameters:
     -----------
     x:              numpy array
-                    input data aranged column wise
+                    input data aranged row wise
     y:              numpy array
-                    output data/target values aranged column wise
+                    output data/target values aranged row wise
     n_batches:      int
                     number of batches to return
     shuffle:        bool, default True
@@ -246,8 +321,8 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
     i = -1 #to catch errors for n_batches == 1
     batches = []
     for i in range( n_batches-1):
-        batches.append( ( x[..., i*batchsize:(i+1)*batchsize], y[..., i*batchsize:(i+1)*batchsize] ))
-    batches.append( ( x[..., (i+1)*batchsize:max_sample ], y[..., (i+1)*batchsize:max_sample ] ))
+        batches.append( ( x[i*batchsize:(i+1)*batchsize], y[i*batchsize:(i+1)*batchsize] ))
+    batches.append( ( x[ (i+1)*batchsize:max_sample ], y[(i+1)*batchsize:max_sample ] ))
     return batches
 
 
@@ -262,9 +337,9 @@ def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0):
     Parameters:
     -----------
     x:              numpy array
-                    input data aranged column wise
+                    input data aranged row wise
     y:              numpy array
-                    output data/target values aranged column wise
+                    output data/target values aranged row wise
     n_batches:      int
                     number of batches to return
     shuffle:        bool, default True

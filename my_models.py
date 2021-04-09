@@ -3,6 +3,7 @@ import tensorflow_probability as tfp
 import itertools
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten
 from tensorflow_probability import distributions as tfd
 
 
@@ -189,6 +190,42 @@ class ProbabalisticNN( Model):
 
     def predict_validation( self, x):
         return self.call( x, training=False)
+
+class AlexNet(Model):
+    def __init__( self, output_size ):
+        """
+        set up the alex net (which might not be 100% alex net but really close to it)
+        """
+        super(AlexNet, self).__init__()
+        arch = [] #abbreviation for self.architecture
+        ## feature extraction
+        arch.append( Conv2D( 64, kernel_size=(11,11), strides=(4,4), padding='same', activation='relu' ))
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
+        arch.append( Conv2D( 192, kernel_size=(5,5), strides=(1,1), padding='same', activation='relu' ))
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
+        arch.append( Conv2D( 384, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' ))
+        arch.append( Conv2D( 256, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' )) 
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ) )
+        ## pooling
+        arch.append( AveragePooling2D(3,3) ) 
+        ## regressor
+        arch.append( Flatten() )
+        arch.append( Dropout( 0.5) )
+        arch.append( Dense( 4096, activation='relu') )
+        arch.append( Dropout( 0.5) )
+        arch.append( Dense( 4096, activation='relu') )
+        arch.append( Dense( output_size) )
+        self.architecture = arch
+        
+
+    def call(self, x, training=False):
+        for layer in self.architecture:
+            x = layer( x, training=training)
+        return x
+
+    def predict( self, x):
+        return self( x, training=False )
+
 
 ############ BELOW HERE YOU WILL FIND ONLY TRASH WHICH WAS HERE FOR TESTING
 

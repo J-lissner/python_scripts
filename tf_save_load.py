@@ -128,6 +128,8 @@ class Saver():
 
 
     def scaling(self, input_scaling, output_scaling):
+        #TODO add another set of 'manual scaling' given as functions with inverse scaling requirement
+        # then simply call these on the input when they are put LAST (to scale) on the data
         scalings = { 'input':input_scaling, 'output':output_scaling}
         with open( '{}/scalings.pkl'.format( self.savepath), 'wb') as pklfile:
             pickle.dump( scalings, pklfile)
