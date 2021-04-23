@@ -5,7 +5,7 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten
 from tensorflow_probability import distributions as tfd
-
+from tensorflow.math import ceil
 
 
 class RegularizedDense(Model):
@@ -98,7 +98,57 @@ class ReconstructedANN( Model):
     def predict( self, x):
         return self.call( x, training=False)
 
+##################### Autoencoders ######### 
+class AutoEncoder( Model):
+    def __init__( self, n_encode, input_dim, encoded_dim, dropout=0.5, activation='selu'):
+        """
+        get the architecture of a autoencoder
+        mirrors the encoding architecture to the decoding architecture as of now
+        Parameters:
+        -----------
+        n_encode:       int
+                        number of layers to encode
+        input_dim:      int
+                        dimension of the input data
+        encoded_dim:    int
+                        size of the encode layer
+        dropout:        float or bool, default 0.5
+                        if and what dropout should be applied
+        activation:     string or list of strings or bool, default 'selu'
+                        which activation to apply. If only a string is 
+                        given then all layers share the same activation
+                        function. Otherwise a list specifies each layer
+        
+        """
+        super( AutoEncoder, self).__init__()
+        #input preprocessing
+        layer_decline = (input_dim - encoded_dim)/(n_encode+1)
+        if isinstance( activation, str):
+            activation = (2*n_encode+1)*[activation]
+        self.architecture = []
+        #encode
+        for i in range( n_encode ):
+            self.architecture.append( Dense( ceil( input_dim - (i+1)*layer_decline), activation=activation[i] ) )
+            if dropout:
+                self.architecture.append( Dropout( dropout))
+        #middle layer
+        self.architecture.append( Dense( encoded_dim, activation=activation[i+1] ) )
+        #decode
+        for i in range( n_encode):
+            self.architecture.append( Dense( ceil(encoded_dim + (i+1)* layer_decline), activation=activation[i] ) )
+            if dropout:
+                self.architecture.append( Dropout( dropout) )
+        #output layer
+        self.architecture.append( Dense( input_dim) )
 
+    def call(self, x, training=False):
+        for layer in self.architecture:
+            x = layer(x, training=training)
+        return x
+
+    def predict( self, x):
+        return self( x)
+        
 ############ Bayesian Neural Networks (BNN) ##############
 class BayesianNN( Model):
     """
@@ -285,4 +335,3 @@ class DummyNN( Model):
 
     def predict( self, x):
         return self.call( x)
-
