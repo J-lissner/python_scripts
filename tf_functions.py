@@ -11,9 +11,10 @@ def train_step(x, y, model, loss_object):
         loss_object loss from tf.keras.losses (or self defined)
     """
     with tf.GradientTape() as tape:
-        loss = loss_object( y, model(x, training=True ) )
+        y_pred = model(x, training=True )
+        loss = loss_object( y, y_pred )
     gradients = tape.gradient( loss, model.trainable_variables)
-    return gradients, loss
+    return gradients, loss, y_pred
 
 
 def evaluation( x, y, model, loss_object):

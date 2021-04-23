@@ -1,8 +1,9 @@
-import dill as pickle
 import os
-#import pickle
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 
-from importlib import import_module #as import_module
+#import pickle
+import dill as pickle
+from importlib import import_module 
 from zipfile import ZipFile
 
 """
@@ -47,7 +48,12 @@ class Saver():
         --------
         None:           stores files in the specified location
         """
-        self.script_path = '/home/lissner/scripts/python/tensorflow_functions/'
+        if script_path is None:
+            self.script_path = '/home/lissner/scripts/python/tensorflow_functions/'
+        else: 
+            self.script_path = script_path
+            if script_path[-1] != '/':
+                self.script_path = self.script_path + '/'
         self.savepath = savepath
 
         if name_of_code[-3:] != '.py':
@@ -123,6 +129,8 @@ class Saver():
 
 
     def scaling(self, input_scaling, output_scaling):
+        #TODO add another set of 'manual scaling' given as functions with inverse scaling requirement
+        # then simply call these on the input when they are put LAST (to scale) on the data
         scalings = { 'input':input_scaling, 'output':output_scaling}
         with open( '{}/scalings.pkl'.format( self.savepath), 'wb') as pklfile:
             pickle.dump( scalings, pklfile)

@@ -1,6 +1,11 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
+import itertools
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten
+from tensorflow_probability import distributions as tfd
+
 
 
 class RegularizedDense(Model):
@@ -93,44 +98,47 @@ class ReconstructedANN( Model):
     def predict( self, x):
         return self.call( x, training=False)
 
-############ Bayesian Neural Networks (BNN) ##############
 
+############ Bayesian Neural Networks (BNN) ##############
 class BayesianNN( Model):
     """
-    Constructs a Bayesian Neural Network (without any dropout or batch normalization, TODO) 
-    The penultimate layer has 'tanh' activation (for small NNs, linear and other non-linear activations did not result in sensible training)
-    The output of this model is of type tensorflow_probability.distribution. (Look into tfp docs for more methods and attributes)
+    Constructs a Bayesian Neural Network
+    The penultimate layer has 'tanh' activation (for small NNs, linear and 
+    other non-linear activations did not result in sensible training)
+    The output of this model is of type tensorflow_probability.distribution. 
+    (Look into tfp docs for more methods and attributes)
     """
-    def __init__(self, n_output,  KLD_func, n_neuron=[6,7], activation=['selu', 'selu'], *args, **kwargs): 
+    def __init__(self, n_output,  KLD_func, n_neuron=[6,7], activation=['selu'], batch_norm=False, *args, **kwargs): 
         """
         Parameters:
         ---------------------
         n_output:       int
-                        number of output neurons of the model
-        
+                        number of output neurons of the model 
         KLD_func:       lambda function
-                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size
-
+                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size 
         n_neurons:      list of ints
-                        no. of neurons in hidden layer (excl. input and output layers)
-
+                        no. of neurons in hidden layer (excl. input and output layers) 
         activation:     list of strings
-                        activation of each layer. Length has to match "hidden_neurons"
-
-
+                        activation of each layer. Endlessly cycles the 
+                        activation functions if len( activation) < len(n_neuron)
+        batch_norm:     bool, default False
+                        if batch normalization should be applied behind each hidden layer
         """
         super( BayesianNN, self).__init__()
         self.architecture = []
+        activation = itertools.cycle( activation)
         for i in range( len( n_neuron) ):
-            self.architecture.append( tfpl.DenseFlipout( n_neuron[i], activation=activation[i], dtype='float64', 
+            self.architecture.append( tfp.layers.DenseFlipout( n_neuron[i], activation=next(activation), dtype='float64', 
                                                          kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
                                                          bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
                                                          bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
-        self.architecture.append( tfpl.DenseFlipout( 2*n_output, activation='tanh', dtype='float64',
+            if batch_norm: 
+                self.architecture.append( BatchNormalization() )
+        self.architecture.append( tfp.layers.DenseFlipout( 2*n_output, activation=next(activation), dtype='float64',
                                                      kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
                                                      bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
                                                      bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
-        self.architecture.append( tfpl.DistributionLambda( make_distribution_fn=lambda params: tfd.Normal(loc=params[...,:n_output],
+        self.architecture.append( tfp.layers.DistributionLambda( make_distribution_fn=lambda params: tfd.Normal(loc=params[...,:n_output],
                                                            scale= 1e-3 + tf.abs(params[...,n_output:])), dtype='float64' )) 
 
     def call(self, x, training=False):
@@ -142,33 +150,39 @@ class BayesianNN( Model):
         return self.call( x, training=False)
 
 
-class NonBayesianNN( Model):
+class ProbabalisticNN( Model):
     """
-    Non-Bayesian version of the Neural Network model defined above
+    Constructs a Dense feedforward neural network which predicts a distribution
+    The output of this model is of type tensorflow_probability.distribution. 
+    (Look into tfp docs for more methods and attributes)
     """
-    def __init__(self, n_output, n_neuron=[6,7], activation=['selu', 'selu'], *args, **kwargs): 
+    def __init__(self, n_output, n_neuron=[6,7], activation=['selu'], batch_norm=False, *args, **kwargs): 
         """
         Parameters:
         ---------------------
         n_output:       int
-                        number of output neurons of the model
-        
-        KLD_func:       lambda function
-                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size
-
+                        number of output neurons of the model 
         n_neurons:      list of ints
-                        no. of neurons in hidden layer (excl. input and output layers)
-
+                        no. of neurons in hidden layer (excl. input and output layers) 
         activation:     list of strings
-                        activation of each layer. Length has to match "hidden_neurons"
+                        activation of each layer. Endlessly cycles the 
+                        activation functions if len( activation) < len(n_neuron)
+        batch_norm:     bool, default False
+                        if batch normalization should be applied behind each hidden layer
         """
-        super( NonBayesianNN, self).__init__()
+        super( ProbabalisticNN, self).__init__()
         self.architecture = []
+        activation = itertools.cycle( activation)
+        distribution = lambda params: tfd.Normal(loc=params[...,:n_output],
+                                 scale= 1e-3 + tf.abs(params[...,n_output:]))
+                                 
         for i in range( len( n_neuron) ):
-            self.architecture.append( Dense( n_neuron[i], activation=activation[i]))
-        
-        self.architecture.append( Dense( n_output, activation=None))
-        
+            self.architecture.append( Dense( n_neuron[i], activation=next(activation), dtype='float64' ) )
+            if batch_norm: 
+                self.architecture.append( BatchNormalization() )
+        self.architecture.append( Dense( 2*n_output, activation=next(activation), dtype='float64' ) )
+        self.architecture.append( tfp.layers.DistributionLambda( make_distribution_fn=tfp.layers.DistributionLambda( distribution, dtype='float64')  ) )
+
     def call(self, x, training=False):
         for layer in self.architecture:
             x = layer(x)
@@ -176,6 +190,41 @@ class NonBayesianNN( Model):
 
     def predict_validation( self, x):
         return self.call( x, training=False)
+
+class AlexNet(Model):
+    def __init__( self, output_size ):
+        """
+        set up the alex net (which might not be 100% alex net but really close to it)
+        """
+        super(AlexNet, self).__init__()
+        arch = [] #abbreviation for self.architecture
+        ## feature extraction
+        arch.append( Conv2D( 64, kernel_size=(11,11), strides=(4,4), padding='same', activation='relu' ))
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
+        arch.append( Conv2D( 192, kernel_size=(5,5), strides=(1,1), padding='same', activation='relu' ))
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
+        arch.append( Conv2D( 384, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' ))
+        arch.append( Conv2D( 256, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' )) 
+        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ) )
+        ## pooling
+        arch.append( AveragePooling2D(3,3) ) 
+        ## regressor
+        arch.append( Flatten() )
+        arch.append( Dropout( 0.5) )
+        arch.append( Dense( 4096, activation='relu') )
+        arch.append( Dropout( 0.5) )
+        arch.append( Dense( 4096, activation='relu') )
+        arch.append( Dense( output_size) )
+        self.architecture = arch
+        
+
+    def call(self, x, training=False):
+        for layer in self.architecture:
+            x = layer( x, training=training)
+        return x
+
+    def predict( self, x):
+        return self( x, training=False )
 
 
 ############ BELOW HERE YOU WILL FIND ONLY TRASH WHICH WAS HERE FOR TESTING
