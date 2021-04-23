@@ -1,8 +1,9 @@
-import dill as pickle
 import os
-#import pickle
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 
-from importlib import import_module #as import_module
+#import pickle
+import dill as pickle
+from importlib import import_module 
 from zipfile import ZipFile
 
 """
