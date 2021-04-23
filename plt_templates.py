@@ -209,7 +209,7 @@ def set_titles( axes, *titles, **kwargs ):
     """
     if isinstance( axes, np.ndarray):
         axes_shape = axes.shape
-        if np.sum( axes.shape) != len( titles):
+        if np.prod( axes.shape) != len( titles):
             print( "################### WARNING #####################\nmismatching number of titles and axes objects given, matching the first 'n axes' with first 'n titles' " )
         axes = axes.flatten()
         for i in range( np.min( (len( titles), len(axes) )) ):
@@ -217,7 +217,7 @@ def set_titles( axes, *titles, **kwargs ):
         axes = axes.reshape( axes_shape)
     else:
         try:
-            axes.set_title( titles, **kwargs)
+            axes.set_title( *titles, **kwargs)
         except:
             print( "################### WARNING #####################\n title for single axes object could not be set, returning axes with no title added" )
     return axes
@@ -425,3 +425,27 @@ def layout(ax, title=None, titlesize=None, ticksize=None, gridstyle=None, \
         else:
             ax.set_title(title)
     return ax
+
+
+def imshow_with_colorbar( ax, image, OPT='ARGS'):
+    return
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    gcf = ax.imshow( image)
+    # create an axes on the right side of ax. The width of cax will be 5%
+    # of ax and the padding between cax and ax will be fixed at 0.05 inch
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar( gcf, cax=cax ) #oder so
+    # TODO IMPLEMENT THIS FUNCTION
+
+
+## ripped from SO, might be useful
+#def add_colorbar(im, aspect=20, pad_fraction=0.5, **kwargs):
+#    """Add a vertical color bar to an image plot."""
+#    divider = axes_grid1.make_axes_locatable(im.axes)
+#    width = axes_grid1.axes_size.AxesY(im.axes, aspect=1./aspect)
+#    pad = axes_grid1.axes_size.Fraction(pad_fraction, width)
+#    current_ax = plt.gca()
+#    cax = divider.append_axes("right", size=width, pad=pad)
+#    plt.sca(current_ax)
+#    return im.axes.figure.colorbar(im, cax=cax, **kwargs)
