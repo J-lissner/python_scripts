@@ -22,7 +22,7 @@ class Saver():
     object below reassembles the model for further usage.
     The Retrain() object is intended to load and save the model again 
     """
-    def __init__(self, savepath, name_of_code, model_name, model, hard_overwrite=True, script_path=None):
+    def __init__(self, savepath, model_code, model_name, model, hard_overwrite=True, script_path=None):
         """
         Specify on where the model should be stored 
         as well as necessary information for reconstruction
@@ -33,7 +33,7 @@ class Saver():
         savepath:       string
                         Path to store location,
                         has to match the path of the tf.train.CheckpointManager
-        name_of_code:   string
+        model_code:     string
                         name of the codefile where the model-object is defined
         model_name:     string
                         name of the model object in the codefile
@@ -56,17 +56,17 @@ class Saver():
                 self.script_path = self.script_path + '/'
         self.savepath = savepath
 
-        if name_of_code[-3:] != '.py':
-            name_of_code += '.py'
+        if model_code[-3:] != '.py':
+            model_code += '.py'
         if hard_overwrite is True:
             os.system( 'rm -r {}'.format( self.savepath) )
         os.system( 'mkdir -p {}'.format( self.savepath) )
         os.system( 'touch {}/__init__.py'.format( self.savepath) )
-        if os.path.isfile( name_of_code): 
-            os.system( 'cp {} {}/custom_model.py'.format( name_of_code, self.savepath) )
+        if os.path.isfile( model_code): 
+            os.system( 'cp {} {}/custom_model.py'.format( model_code, self.savepath) )
         else:
             print( 'file for models not found, taking default path of scripts:', self.script_path)
-            os.system( 'cp {} {}/custom_model.py'.format( self.script_path+name_of_code, self.savepath) ) 
+            os.system( 'cp {} {}/custom_model.py'.format( self.script_path+model_code, self.savepath) ) 
 
         with open( '{}/model_name.pkl'.format( self.savepath), 'wb') as pklfile:
             pickle.dump( model_name, pklfile) 

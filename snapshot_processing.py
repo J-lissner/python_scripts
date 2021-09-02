@@ -197,7 +197,7 @@ def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False, draw_r
         n_circle         = ceil( n/2)
         n_rectangle      = floor( n/2)
         size_dataset     = raw_data['circle/image_data/dset_{}'.format( dset_nr) ].shape[1]
-        if draw_random:
+        if draw_random is True:
             circle_index     = np.sort( np.random.permutation( size_dataset)[:n_circle] ) #to access hdf5 files the indices need to be sorted
             rectangle_index  = np.sort( np.random.permutation( size_dataset)[:n_rectangle] ) #These statements are only useful if n/2 <= size_dataset
         else:

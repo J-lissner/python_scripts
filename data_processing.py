@@ -122,7 +122,7 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         data = data.T
         if slave_data:
             slave_data = slave_data.T
-    n, m  = data.shape
+    n, m  = data.shape[:2]
     scaling = [None,None, scaletype]
     if scaling[2] == 'single_std1':
         scaling[0] = np.mean( data, 0)
