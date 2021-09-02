@@ -1,26 +1,23 @@
 import tensorflow as tf
-import tensorflow_probability as tfp
 import itertools
+from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten
-from tensorflow_probability import distributions as tfd
-from tensorflow.math import ceil
+from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
+from tensorflow.keras.layers import concatenate, Flatten
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 
 
-class RegularizedDense(Model):
-    def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None, batch_normalization=False): #maybe do even "regularizer as input"
-        super(RegularizedDense, self).__init__()
-        self.architecture = [ Dense( n_neuron[0], activation=activation[0] , kernel_regularizer='l2', kernel_initializer='he_normal')]
-        for i in range( 1, len(n_neuron) ): 
-            if dropout:
-                self.architecture.append( Dropout( dropout) )
-            if batch_normalization is True:
-                self.architecture.append( BatchNormalization() )
-
-            self.architecture.append( Dense( n_neuron[i], activation=activation[i] , kernel_regularizer='l2', kernel_initializer='he_normal')  )
-        self.architecture.append( Dense(n_output, activation=None, kernel_regularizer='l2', kernel_initializer='he_uniform') )
-
+# overwrite the model to get the base call and predict_validation for default behavious
+class Model( Model):
+    """
+    This is used to implement the generic methods like
+    call, predict, predict_validation
+    and inherit them, that I have less copied lines of code
+    """
+    def __init__( self, *args, **kwargs):
+        super( Model, self).__init__()
+        self.architecture = []
 
     def call(self, x, training=False):
         for layer in self.architecture:
@@ -30,13 +27,33 @@ class RegularizedDense(Model):
     def predict( self, x):
         return self( x, training=False )
 
+    def predict_validation( self, x):
+        return self( x, training=False )
+
+
+
+class RegularizedDense(Model):
+    def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None, batch_norm=False): #maybe do even "regularizer as input"
+        super(RegularizedDense, self).__init__()
+        self.architecture = [ Dense( n_neuron[0], activation=activation[0] , kernel_regularizer='l2', kernel_initializer='he_normal')]
+        model = self.architecture
+        for i in range( 1, len(n_neuron) ): 
+            if dropout:
+                model.append( Dropout( dropout) )
+            if batch_norm is True:
+                model.append( BatchNormalization() )
+
+            model.append( Dense( n_neuron[i], activation=activation[i] , kernel_regularizer='l2', kernel_initializer='he_normal')  )
+        model.append( Dense(n_output, activation=None, kernel_regularizer='l2', kernel_initializer='he_uniform') )
+
+
 
 class ForwardNormalization( Model):
     """
     Construct a dense feed forward neural network with (optional) batch normalization and dropout
     The connection to the output layer is always linear #TODO mb can add an optional argument for non linear actuvation function
     """
-    def __init__(self, n_output, hidden_neurons, activation, batch_normalization=True, dropout=False):
+    def __init__(self, n_output, hidden_neurons, activation, batch_norm=True, dropout=False):
         """
         Parameters:
         -----------
@@ -45,44 +62,41 @@ class ForwardNormalization( Model):
         hidden_neurons: list of ints #TODO bad variable name
                         number of neurons of the internal layers
         activation:     list of strings
-                        activation of each layer. Length has to match "hidden_neurons"
-
-        batch_normalization:        bool or list of bools, default False
-                                    if a single bool is given, it is applied to every internal layer
-                                    if a list of bool is given, length has to match "hidden_neurons" and is specified per layer
-        dropout:                    float or list of floats, default False
-                                    if a single float is given, it is applied to every internal layer
-                                    if a list of float is given, length has to match "hidden_neurons" and is specified per layer 
+                        activation of each layer. Length has to match "hidden_neurons" 
+        batch_norm:    bool or list of bools, default False
+                       if a single bool is given, it is applied to every internal layer
+                       if a list of bool is given, length has to match "hidden_neurons"
+                       and is specified per layer
+        dropout:       float or list of floats, default False
+                       if a single float is given, it is applied to every internal layer
+                       if a list of float is given, length has to match "hidden_neurons" 
+                       and is specified per layer 
         """
         super(ForwardNormalization, self).__init__()
-        self.architecture = [ Dense( hidden_neurons[0], activation=activation[0] )  ]
+        activation = itertools.cycle( activation)
+        self.architecture = [ Dense( hidden_neurons[0], activation=next(activation) )  ]
+        model = self.architecture
         for i in range( 1, len(hidden_neurons) ):
             if isinstance( dropout, float):
-                self.architecture.append( Dropout( dropout) )
+                model.append( Dropout( dropout) )
             elif isinstance( dropout, tuple) or isinstance( dropout, list):
-                self.architecture.append( Dropout( dropout[i-1] ) )
+                model.append( Dropout( dropout[i-1] ) )
 
-            if batch_normalization is True:
-                self.architecture.append( BatchNormalization() )
-            elif isinstance( batch_normalization, tuple) or isinstance( batch_normalization, list):
-                if batch_normalization[i-1] is True:
-                    self.architecture.append( BatchNormalization() )
+            if batch_norm is True:
+                model.append( BatchNormalization() )
+            elif isinstance( batch_norm, tuple) or isinstance( batch_norm, list):
+                if batch_norm[i-1] is True:
+                    model.append( BatchNormalization() )
 
-            self.architecture.append( Dense( hidden_neurons[i], activation=activation[i] )  ) 
-        self.architecture.append( Dense(n_output, activation=None) )
+            model.append( Dense( hidden_neurons[i], activation=next(activation) )  ) 
+        model.append( Dense(n_output, activation=None) )
 
-
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer( x, training=training)
-        return x
-
-    def predict( self, x):
-        return self( x, training=False )
         
-
-
 class ReconstructedANN( Model):
+    """
+    Model which served as a baseline which was solely reconstructed from the 
+    paper data driven microstructure property relations (2018)
+    """
     def __init__(self, n_output, n_neuron=[6,7], activation=['softplus','softplus'], *args, **kwargs): 
         super( ReconstructedANN, self).__init__()
         self.architecture = []
@@ -90,15 +104,9 @@ class ReconstructedANN( Model):
             self.architecture.append( Dense( n_neuron[i], activation=activation[i] ) )
         self.architecture.append( Dense( n_output, activation=None ) )
 
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer(x)
-        return x
 
-    def predict( self, x):
-        return self.call( x, training=False)
 
-##################### Autoencoders ######### 
+##################### Autoencoders ##################### 
 class AutoEncoder( Model):
     def __init__( self, n_encode, input_dim, encoded_dim, dropout=0.5, activation='selu'):
         """
@@ -126,212 +134,141 @@ class AutoEncoder( Model):
         if isinstance( activation, str):
             activation = (2*n_encode+1)*[activation]
         self.architecture = []
+        model = self.architecture
         #encode
         for i in range( n_encode ):
-            self.architecture.append( Dense( ceil( input_dim - (i+1)*layer_decline), activation=activation[i] ) )
+            model.append( Dense( ceil( input_dim - (i+1)*layer_decline), activation=activation[i] ) )
             if dropout:
-                self.architecture.append( Dropout( dropout))
+                model.append( Dropout( dropout))
         #middle layer
-        self.architecture.append( Dense( encoded_dim, activation=activation[i+1] ) )
+        model.append( Dense( encoded_dim, activation=activation[i+1] ) )
         #decode
         for i in range( n_encode):
-            self.architecture.append( Dense( ceil(encoded_dim + (i+1)* layer_decline), activation=activation[i] ) )
+            model.append( Dense( ceil(encoded_dim + (i+1)* layer_decline), activation=activation[i] ) )
             if dropout:
-                self.architecture.append( Dropout( dropout) )
+                model.append( Dropout( dropout) )
         #output layer
-        self.architecture.append( Dense( input_dim) )
+        model.append( Dense( input_dim) )
 
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer(x, training=training)
-        return x
 
-    def predict( self, x):
-        return self( x)
-        
-############ Bayesian Neural Networks (BNN) ##############
-class BayesianNN( Model):
+
+##################### Convolutional Neural Networks ##################### 
+class InceptionLike( Model):
+  def __init__( self, output_size, input_size, activation=None, n_blocks=1, globalpool=False, *args, **kwargs):
     """
-    Constructs a Bayesian Neural Network
-    The penultimate layer has 'tanh' activation (for small NNs, linear and 
-    other non-linear activations did not result in sensible training)
-    The output of this model is of type tensorflow_probability.distribution. 
-    (Look into tfp docs for more methods and attributes)
+    output_size: int, size output
+    input_size: int, size input
+    activation: activation function in all layers
+    globalpool: if global average pooling should be conducted before flattening 
     """
-    def __init__(self, n_output,  KLD_func, n_neuron=[6,7], activation=['selu'], batch_norm=False, *args, **kwargs): 
-        """
-        Parameters:
-        ---------------------
-        n_output:       int
-                        number of output neurons of the model 
-        KLD_func:       lambda function
-                        Kullback-Liebler Divergence function of Tensorflow scaled by the training set size 
-        n_neurons:      list of ints
-                        no. of neurons in hidden layer (excl. input and output layers) 
-        activation:     list of strings
-                        activation of each layer. Endlessly cycles the 
-                        activation functions if len( activation) < len(n_neuron)
-        batch_norm:     bool, default False
-                        if batch normalization should be applied behind each hidden layer
-        """
-        super( BayesianNN, self).__init__()
-        self.architecture = []
-        activation = itertools.cycle( activation)
-        for i in range( len( n_neuron) ):
-            self.architecture.append( tfp.layers.DenseFlipout( n_neuron[i], activation=next(activation), dtype='float64', 
-                                                         kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
-                                                         bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
-                                                         bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
-            if batch_norm: 
-                self.architecture.append( BatchNormalization() )
-        self.architecture.append( tfp.layers.DenseFlipout( 2*n_output, activation=next(activation), dtype='float64',
-                                                     kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
-                                                     bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
-                                                     bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
-        self.architecture.append( tfp.layers.DistributionLambda( make_distribution_fn=lambda params: tfd.Normal(loc=params[...,:n_output],
-                                                           scale= 1e-3 + tf.abs(params[...,n_output:])), dtype='float64' )) 
-
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer(x)
-        return x
-
-    def predict_validation( self, x):
-        return self.call( x, training=False)
+    super( InceptionLike, self).__init__()
+    self.n_blocks = n_blocks
+    self.activation = activation
+    self.input_size = input_size
+    self.output_size = output_size
+    self.globalpool = globalpool
+    self.build_model()
 
 
-class ProbabalisticNN( Model):
-    """
-    Constructs a Dense feedforward neural network which predicts a distribution
-    The output of this model is of type tensorflow_probability.distribution. 
-    (Look into tfp docs for more methods and attributes)
-    """
-    def __init__(self, n_output, n_neuron=[6,7], activation=['selu'], batch_norm=False, *args, **kwargs): 
-        """
-        Parameters:
-        ---------------------
-        n_output:       int
-                        number of output neurons of the model 
-        n_neurons:      list of ints
-                        no. of neurons in hidden layer (excl. input and output layers) 
-        activation:     list of strings
-                        activation of each layer. Endlessly cycles the 
-                        activation functions if len( activation) < len(n_neuron)
-        batch_norm:     bool, default False
-                        if batch normalization should be applied behind each hidden layer
-        """
-        super( ProbabalisticNN, self).__init__()
-        self.architecture = []
-        activation = itertools.cycle( activation)
-        distribution = lambda params: tfd.Normal(loc=params[...,:n_output],
-                                 scale= 1e-3 + tf.abs(params[...,n_output:]))
-                                 
-        for i in range( len( n_neuron) ):
-            self.architecture.append( Dense( n_neuron[i], activation=next(activation), dtype='float64' ) )
-            if batch_norm: 
-                self.architecture.append( BatchNormalization() )
-        self.architecture.append( Dense( 2*n_output, activation=next(activation), dtype='float64' ) )
-        self.architecture.append( tfp.layers.DistributionLambda( make_distribution_fn=tfp.layers.DistributionLambda( distribution, dtype='float64')  ) )
+  def build_model( self):
+    #### First inception block
+    self.inception_1 = [ [], [], [], [] ]
+    block_layer = self.inception_1[0]
+    block_layer.append( Conv2DPeriodic( filters=5, kernel_size=17, strides=10, activation=self.activation, input_shape=self.input_size)) 
+    block_layer.append( MaxPool2DPeriodic( pool_size=2, strides=None) ) #None defaults to pool_size) 
+    block_layer.append( BatchNormalization() )
+    block_layer.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=2, activation=self.activation))
+    block_layer.append( BatchNormalization() )
 
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer(x)
-        return x
+    #second middle filter generic filter pooling filter
+    generic = self.inception_1[1]
+    generic.append( Conv2DPeriodic( filters=5, kernel_size=5, strides=3, activation=self.activation, input_shape=self.input_size))
+    generic.append( MaxPool2DPeriodic( pool_size=2))
+    generic.append( BatchNormalization() )
+    generic.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=3, activation=self.activation))
+    generic.append( MaxPool2DPeriodic( pool_size=2, padding='valid') )
+    generic.append( BatchNormalization() )
 
-    def predict_validation( self, x):
-        return self.call( x, training=False)
+    # third block with average pooling and a medium sized filter
+    avg_medium = self.inception_1[2]
+    avg_medium.append( AvgPool2DPeriodic( pool_size=5, input_shape = self.input_size))
+    avg_medium.append( Conv2DPeriodic( filters=5, kernel_size=5, strides=2, activation=self.activation ) )
+    avg_medium.append( BatchNormalization() )
+    avg_medium.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=2, activation=self.activation ) )
+    avg_medium.append( MaxPool2DPeriodic( pool_size=2) )
+    avg_medium.append( BatchNormalization() )
 
-class AlexNet(Model):
-    def __init__( self, output_size ):
-        """
-        set up the alex net (which might not be 100% alex net but really close to it)
-        """
-        super(AlexNet, self).__init__()
-        arch = [] #abbreviation for self.architecture
-        ## feature extraction
-        arch.append( Conv2D( 64, kernel_size=(11,11), strides=(4,4), padding='same', activation='relu' ))
-        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
-        arch.append( Conv2D( 192, kernel_size=(5,5), strides=(1,1), padding='same', activation='relu' ))
-        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ))
-        arch.append( Conv2D( 384, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' ))
-        arch.append( Conv2D( 256, kernel_size=(3,3), strides=(1,1), padding='same', activation='relu' )) 
-        arch.append( MaxPool2D( pool_size=(3,3), strides=(2,2) ) )
-        ## pooling
-        arch.append( AveragePooling2D(3,3) ) 
-        ## regressor
-        arch.append( Flatten() )
-        arch.append( Dropout( 0.5) )
-        arch.append( Dense( 4096, activation='relu') )
-        arch.append( Dropout( 0.5) )
-        arch.append( Dense( 4096, activation='relu') )
-        arch.append( Dense( output_size) )
-        self.architecture = arch
-        
+    # third block with average pooling and a medium sized filter
+    avg_small = self.inception_1[3]
+    avg_small.append( AvgPool2DPeriodic( pool_size=5, input_shape=self.input_size))
+    avg_small.append( BatchNormalization() )
+    avg_small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=2, activation=self.activation ) )
+    avg_small.append( AvgPool2DPeriodic( pool_size=4) )
+    avg_small.append( BatchNormalization() )
+    ########
 
-    def call(self, x, training=False):
-        for layer in self.architecture:
-            x = layer( x, training=training)
-        return x
-
-    def predict( self, x):
-        return self( x, training=False )
+    self.dense = []
+    if self.globalpool is True:
+        self.dense.append( GlobalAveragePooling2D() )
+    self.dense.append( Flatten() )
+    self.dense.append( Dense( 128, activation='selu') )
+    self.dense.append( BatchNormalization() )
+    self.dense.append( Dense( 64, activation='selu') )
+    self.dense.append( BatchNormalization() )
+    self.dense.append( Dense( 32, activation='selu') )
+    self.dense.append( BatchNormalization() ) 
+    self.dense.append( Dense( 16, activation='selu') ) 
+    self.dense.append( BatchNormalization() ) 
+    self.dense.append( Dense( self.output_size) ) 
 
 
-############ BELOW HERE YOU WILL FIND ONLY TRASH WHICH WAS HERE FOR TESTING
+  def call( self, images):
+    #convolutions of feature extractions
+    x = []
+    for i in range( len( self.inception_1)):
+        for j in range( len( self.inception_1[i]) ):
+            if j == 0:
+                x.append( self.inception_1[i][j]( images) )
+            else:
+                x[i] = self.inception_1[i][j]( x[i] ) 
 
-class DummyNN( Model):
-    #def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None): #maybe do even "regularizer as input"
-    #    super(DummyNN, self).__init__()
-    #    self.architecture = []
-    #    for i in range( len(n_neuron) ):
-    #        self.architecture.append( Dense( n_neuron[i], activation=activation[i] , kernel_regularizer='l2', kernel_initializer='he_normal')  )
-    #        if dropout:
-    #            self.architecture.append( Dropout( dropout) )
-    #    self.architecture.append( Dense(n_output, activation=None, kernel_regularizer='l2', kernel_initializer='he_uniform') )
-    #    if dropout:
-    #        self.architecture.append( Dropout( dropout) )
+    # concatenation after first inception layer
+    x = concatenate( x, axis=-1 )#
+    if self.n_blocks == 2:
+        pass 
 
-    def __init__( self, n_output=2, *args, **kwargs):
-        super(DummyNN, self).__init__() 
-        self.architecture = []
-        self.architecture.append( Dense( 12, activation='selu') )
-        self.architecture.append( Dropout( 0.5) )
-        self.architecture.append( Dense( 8, activation='selu') )
-        self.architecture.append( Dense( n_output) )
-    #def __init__( self, n_output=2):
-    #    super(DummyNN, self).__init__() 
-    #    self.d1 = Dense( 12, activation='selu')
-    #    self.d2 = Dense( 8, activation='selu')
-    #    self.d3 = Dense( n_output)
+    #dense layer prediction
+    #x = concatenate( x), vol, k_1, k_2)
+    for layer in self.dense:
+        x = layer(x)
+    return x
 
-    def call(self, x, training=False):
-        if training is True:
-            for layer in self.architecture:
-                x = layer(x)
-        elif training is False:
-            for layer in self.architecture:
-                if isinstance( layer, Dense):
-                    x = layer( x)
-        return x
 
-    #def call( self, x, *args, **kwargs):
-    #    for layer in self.architecture:
-    #        x = layer( x)
-    #    return x
-    #def call( self, x, *args, **kwargs ):
-    #    x = self.d1( x)
-    #    x = self.d2( x)
-    #    x = self.d3( x)
-    #    return x
 
-    @tf.function
-    def train_myself( self, x, y, cost, optimizer):
-        with tf.GradientTape() as tape:
-            prediction = self.call( x)
-            loss = cost( y, prediction)
-        gradients = tape.gradient( loss, self.trainable_variables)
-        optimizer.apply_gradients( zip( gradients, self.trainable_variables ) )
-        return loss
+class TranslationInvariant( Model):
+  def __init__( self, output_size, input_size, strides=1, globalpool=True, downsample=False, *args, **kwargs):
+    super().__init__()
+    
+    self.architecture = []
+    model = self.architecture
+    if downsample:
+        model.append( AvgPool2DPeriodic( downsample) )
+    model.append( Conv2DPeriodic( filters=5, kernel_size=7, strides=strides, input_shape=input_size) )
+    model.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=strides) )
+    model.append( Conv2DPeriodic( filters=15, kernel_size=3, strides=strides) )
+    #model.append( Conv2DPeriodic( filters=20, kernel_size=1, strides=strides) )
+    if globalpool:
+        model.append( GlobalAveragePooling2D() )
+    model.append( Flatten() )
+    #model.append( Dense( 128) )
+    #model.append( Dense( 64) )
+    model.append( Dense( 32, activation='selu') )
+    model.append( Dense( 16, activation='selu') )
+    model.append( Dense( output_size) ) 
 
-    def predict( self, x):
-        return self.call( x)
+  def call( self, x):
+      for layer in self.architecture:
+          x = layer( x)
+      return x
+
+
