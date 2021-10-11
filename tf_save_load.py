@@ -212,7 +212,8 @@ class Loader():
         """
         with open( '{}/model_name.pkl'.format( self.path), 'rb') as string_file:
             model_name = pickle.load( string_file)
-        model_code = '{}/custom_model'.format( self.path).replace('/','.') 
+        model_code = '{}/custom_model'.format( self.path).replace('//','.') 
+        model_code = model_code.replace('/','.') 
         model_code = getattr( import_module( model_code), model_name) 
 
         try:

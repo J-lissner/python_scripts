@@ -4,8 +4,7 @@ from numpy.fft import fftn, ifftn
 from math import ceil, floor
 
 
-#####################################AQUISITION AND TRANSFORMATION OF BINARY IMAGE DATA ###############################
-
+#####################################AQUISITION AND TRANSFORMATION OF BINARY IMAGE DATA ############################### 
 def load_datasets( n_snapshots, dataset_counter=0, filename=None, **default_kwargs):
     """
     Load and vectorize multiple 3d RVE snapshots stored in a hdf5 file
@@ -36,16 +35,16 @@ def load_datasets( n_snapshots, dataset_counter=0, filename=None, **default_kwar
     """
     if filename is None:
         filename = '/scratch/lissner/dataverse/3d_rve.h5' 
-    dataset_name = default_kwargs.pop( dataset_name, 'dset_{}' )
+    dataset_name      = default_kwargs.pop( dataset_name, 'dset_{}' )
     specified_indices = default_kwargs.pop( specified_indices, None )
-    hdf5_path = default_kwargs.pop( hdf5_path, 'image_data' )
+    hdf5_path         = default_kwargs.pop( hdf5_path, 'image_data' )
     if default_kwargs:
         print( 'non specified default_kwargs given in "load_datasets", those are', default_kwargs.keys() )
         print( 'continuing program, unexpected behaviour may occur!' )
     
-    h5file = h5py.File( filename, 'r')
+    h5file         = h5py.File( filename, 'r')
     image_location = h5file[ hdf5_path ]
-    snapshots = []
+    snapshots      = []
     if specified_indices is not None: #return the images with the specified index
         for index in specified_indices:
             dataset = dataset_name.format( index)
@@ -88,17 +87,17 @@ def correlation_function( images, fourier=False, resolution=None):
     if dim < n_s:
         print( 'Transposing the images to arrange them column wise (non tensorflow conform)' )
         dim, n_s = n_s, dim
-        images = images.T
+        images   = images.T
     if not (fourier is True or fourier is False):
         dim = len( np.nonzero( np.array( fourier) )[0] )
     if resolution==None:
-        square_size= dim**0.5
-        error_msg  = 'No square resolution detected, please specify original resolution of the images in tuple format'
+        square_size        = dim**0.5
+        error_msg          = 'No square resolution detected, please specify original resolution of the images in tuple format'
         assert square_size == round(square_size), error_msg
-        resolution = ( int(square_size), int(square_size) )
+        resolution         = ( int(square_size), int(square_size) )
 
     ## computation of the 2pcf
-    c11 = np.zeros( (dim, n_s), dtype=float )
+    c11     = np.zeros( (dim, n_s), dtype=float )
     scaling = np.prod( resolution)
     for i in range(n_s):
         c1 = fftn( images[:,i].reshape( resolution))
@@ -150,6 +149,53 @@ def process_snapshots( snapshots, fourier_space=False, scaletype='fscale'):
     return snapshots, vol_2
 
 
+def pcf_redundancy_transformation( snapshots, inverse=False):
+    """
+    Take a hermitian 2d-array (might work for nd, to be tested) aranged
+    into multiple samples of shape (n_samples, n_x, n_y,...) and compress
+    it such that redundant information of hermitian symmetry is removed.
+    This leads to a compression of roughly a factor 1/2, and will always
+    occur in the first axis of the image array (here n_x).
+    The <inverse> keyword will allow back transform of the compressed 
+    snapshot array to the full representation.
+    (2pcf note: Works for the actual 2pcf and the fourier representation)
+    Parameters:
+    -----------
+    snapshots:      numpy nd-array
+                    hermitian symmetric array of shape (n_samples, n_x, n_y)
+    inverse:        bool, default False
+                    whether the full snapshot array should be recovered
+    Returns:
+    --------
+    snapshots:      numpy nd-array
+                    either array with hermitian symmetry removed or recovered.
+    """ 
+    ndim = snapshots.ndim -1
+    if inverse:
+        n_hermit        = snapshots.shape[1]
+        sym_slice       = [slice(None), slice( n_hermit-2, 0, -1) ]#slice over all samples in the compressed direction (always axis 0 of image)
+        line_slice      = (*sym_slice, *(ndim-1)*[0] )
+        #line_dim_expansion = (slice(None), *(ndim-1)*[None] ) #lead to bugs
+        left_insertion  = ( slice(None), slice(None), *(ndim-1)*[0] )
+        block_inversion = ( *sym_slice, *(ndim-1)*[slice(None,0,-1)] )
+        block_insertion = (slice(None), slice(None), *(ndim-1)*[slice( 1, None, None)] )
+        lower_shape     = np.array( snapshots.shape)
+        lower_shape[1] -= (1 + (n_hermit % 2) )
+        lower_part      = np.zeros( lower_shape)
+        print( 'created a new array of shape {} which shalle be assemlbed to the original {}'.format( snapshots.shape, lower_part.shape) )
+        #reassemble the block
+        left_slice      = snapshots[line_slice]#[line_dim_expansion] 
+        lower_block     = snapshots[ block_inversion]
+        lower_part[ left_insertion]  = left_slice
+        lower_part[ block_insertion] = lower_block
+        return np.concatenate( (snapshots, lower_part ), axis=1 )
+    else: 
+        unique_width = ceil( snapshots.shape[1]/2 ) + 1
+        return snapshots[:, :unique_width]
+
+
+
+
 def reduced_coefficients( basis, snapshots, fourier_truncation=None, dim=30):
     """
     Compute the reduced coefficients of the snapshots with the reduced basis
@@ -194,14 +240,14 @@ def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False, draw_r
     if data_file is None:
         data_file = '/scratch/lissner/projekte/pred_kappa/snapshot_data/all_30000_images.hdf5'
     with h5py.File( data_file, 'r' ) as raw_data:
-        n_circle         = ceil( n/2)
-        n_rectangle      = floor( n/2)
-        size_dataset     = raw_data['circle/image_data/dset_{}'.format( dset_nr) ].shape[1]
+        n_circle     = ceil( n/2)
+        n_rectangle  = floor( n/2)
+        size_dataset = raw_data['circle/image_data/dset_{}'.format( dset_nr) ].shape[1]
         if draw_random is True:
-            circle_index     = np.sort( np.random.permutation( size_dataset)[:n_circle] ) #to access hdf5 files the indices need to be sorted
-            rectangle_index  = np.sort( np.random.permutation( size_dataset)[:n_rectangle] ) #These statements are only useful if n/2 <= size_dataset
+            circle_index    = np.sort( np.random.permutation( size_dataset)[:n_circle] ) #to access hdf5 files the indices need to be sorted
+            rectangle_index = np.sort( np.random.permutation( size_dataset)[:n_rectangle] ) #These statements are only useful if n/2 < = size_dataset
         else:
-            circle_index = slice( 0, n_circle)
+            circle_index    = slice( 0, n_circle)
             rectangle_index = slice( 0, n_rectangle)
         if memory_efficient:
             circle_images    = raw_data['circle/image_data/dset_{}'.format( dset_nr) ][:,circle_index]
@@ -211,7 +257,7 @@ def load_snapshots( n, dset_nr=1, data_file=None, memory_efficient=False, draw_r
             circle_images    = circle_images[:, circle_index]
             rectangle_images = raw_data['rectangle/image_data/dset_{}'.format( dset_nr) ][:]
             rectangle_images = rectangle_images[:, rectangle_index] 
-        images           = np.hstack(( circle_images, rectangle_images))
+        images = np.hstack(( circle_images, rectangle_images))
         
         circle_target    = raw_data['circle/target_values/heat_conduction/dset_{}'.format( dset_nr)][:,circle_index]
         rectangle_target = raw_data['rectangle/target_values/heat_conduction/dset_{}'.format( dset_nr)][:,rectangle_index]
