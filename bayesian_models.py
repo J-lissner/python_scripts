@@ -70,7 +70,7 @@ class ProbabalisticNN( Model):
     def __init__(self, n_output, n_neuron=[6,7], activation=['selu'], batch_norm=False, *args, **kwargs): 
         """
         Parameters:
-        ---------------------
+        -----------
         n_output:       int
                         number of output neurons of the model 
         n_neurons:      list of ints

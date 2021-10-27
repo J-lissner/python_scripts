@@ -9,7 +9,7 @@ from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from other_functions import Cycler
 
 
-class SeparateVol( Model):
+class VolBypass( Model): #previously called 'SeparateVol'
   """
   train a model that is linking the volume fraction directly to the
   output layer and taking all other features in a separate Dense model.
@@ -18,7 +18,7 @@ class SeparateVol( Model):
   model.freeze_vol()
   """
   def __init__( self, n_output, *args, **kwargs):
-    super( SeparateVol, self).__init__()
+    super( VolBypass, self).__init__()
     self.build_vol( n_output)
     self.build_regressor( n_output)
 
@@ -43,7 +43,7 @@ class SeparateVol( Model):
     self.vol_part.append( Dense( n_output, activation=None ) ) 
 
 
-  def build_regressor(self, n_output, neurons=[32,32,16,16], batch_normalization=True, activation='selu'): 
+  def build_regressor(self, n_output, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
     """
     build the architecture of the remaining Dense model.
     parameters:
@@ -68,13 +68,6 @@ class SeparateVol( Model):
     self.regressor.append( Dense( n_output) )
 
                 
-
-  def freeze_vol( self):
-      for layer in self.vol_part:
-          layer.trainable=False
-
-
-
   def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=150, **trainers):
     """
     NOTE: before calling this function the model has to be called that
@@ -99,7 +92,7 @@ class SeparateVol( Model):
     loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
     trainable_variables = self.trainable_variables 
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoints, '/tmp/', max_to_keep=1)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
     #trainable_variables = [ layer.trainable_variables for layer in self.vol_part] #or trainable_weights 
     #trainable_variables = self.vol_part.trainable_variables
     valid_loss = [1]
@@ -114,18 +107,24 @@ class SeparateVol( Model):
         gradients = tape.gradient( train_loss, trainable_variables)
         optimizer.apply_gradients( zip(gradients, trainable_variables) )
         if not (x_valid is None and y_valid is None):
-            valid_loss.append( self.loss( y_valid, self.predict_vol( x_valid)).numpy() ) 
+            valid_loss.append( loss( y_valid, self.predict_vol( x_valid)).numpy() ) 
             if valid_loss[-1] < valid_loss[best_epoch]:
-                checkpoint_manager.save()
-
+                checkpoint_manager.save() 
     ## restore the best model and freeze the layers
     if not (x_valid is None and y_valid is None):
-        checkpoint_manager.restore( checkpoint_manager.latest_checkpoint)
+        checkpoint.restore( checkpoint_manager.latest_checkpoint)
     if freeze:
         for layer in self.vol_part:
             layer.trainable=False
     return valid_loss
  
+
+  def freeze_vol( self):
+    """ freeze the layers of the volume fraction linking to the output layer"""
+    for layer in self.vol_part:
+        layer.trainable=False
+
+
 
   def call(self, x, training=False):
     x_vol = self.predict_vol( tf.reshape( x[:,0], (-1, 1) ) )
@@ -135,7 +134,8 @@ class SeparateVol( Model):
     return x + x_vol
 
   def predict_vol( self, x, training=False):
-    x = tf.reshape( x[:,0], ( -1, 1) )
+    """ take the volume fraction and predict the outputs"""
+    x = tf.reshape( x[:,0], ( -1, 1) ) #this line might be unneccesary
     for layer in self.vol_part:
         x = layer( x, training=training)
     return x
@@ -149,7 +149,7 @@ class SeparateVol( Model):
     return self( x, training=False )
 
 
-class ConvoCombo( Model):
+class ConvoCombo( VolBypass):
   """
   train a model that is linking the volume fraction directly to the
   output layer and taking all other features in a separate Dense model.
@@ -158,10 +158,12 @@ class ConvoCombo( Model):
   model.freeze_vol()
   """
   def __init__( self, n_output, *args, **kwargs):
-    super( ConvoCombo, self).__init__()
-    self.build_vol( n_output)
+    super( ConvoCombo, self).__init__( n_output, *args, **kwargs)
+    # above command should also build vol and build regressor
     self.build_extractor()
-    self.build_regressor( n_output)
+    self.build_regressor( n_output, neurons=[ 500, 300, 100, 50] )
+    #self.build_vol( n_output)
+    #self.build_regressor( n_output)
 
 
   def build_extractor( self, activation='relu'):
@@ -262,108 +264,8 @@ class ConvoCombo( Model):
     return concatenate( [x, x_pool])
 
 
-  def build_regressor(self, n_output, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
-    """
-    build the architecture of the remaining Dense model.
-    parameters:
-    -----------
-    n_ouptut:   int
-                size of the output layer
-    n_neurons:  list of ints, default [32,32,16,16]
-                how many hidden layers of what size
-    activation: string or list of strings, default 'selu'
-                activation function of the hidden layer, if a list is 
-                given its length has to match 'n_neurons'
-    """
-    if isinstance( activation, str):
-        activation = Cycler( [activation])
-    else:
-        activation = iter( activation) 
-    self.regressor = []
-    for n_neurons in neurons:
-        self.regressor.append( Dense( n_neurons, activation=next(activation)) )
-        if batch_normalization:
-            self.regressor.append( BatchNormalization() )
-    self.regressor.append( Dense( n_output) )
-
                 
 
-  def build_vol(self, n_output, n_neurons=5, activation='selu'):
-    """ 
-    build the architecture of the upper bypass layer which connects the
-    first input neuron directly to the output layer. it has one hidden
-    layer inbetween to allow for some nonlinearity.
-    parameters:
-    -----------
-    n_ouptut:   int
-                size of the output layer
-    n_neurons:  int, default 5
-                how big the hidden layer should be 
-    activation: string, default 'selu'
-                activation function of the hidden layer
-    """
-    self.vol_part = []
-    if isinstance( n_neurons, int ) and n_neurons > 0:
-        self.vol_part.append( Dense( n_neurons, activation=activation ) )
-    self.vol_part.append( Dense( n_output, activation=None ) ) 
-
-
-
-  def freeze_vol( self):
-    """ freeze the layers of the volume fraction linking to the output layer"""
-    for layer in self.vol_part:
-        layer.trainable=False
-
-
-
-  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=150, **trainers):
-    """
-    NOTE: before calling this function the model has to be called that
-    it is precompiled. Otherwise no training happens.
-    pretrain only the 'upper part' which predicts the volume fraction'
-    parameters:
-    -----------
-    x/y_train:  torch.tensor or numpy array
-                training_data
-    x/y_valid:  torch.tensor or numpy array, default None
-                validation data #todo
-    freeze:     bool, default True
-                whether or not to freeze the weights after training
-    **trainers: kwargs for the training parameters #see below
-    n_epochs:   int, default 150
-    """
-    ## inputs and preprocessing
-    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
-    optimizer         = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
-    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
-    trainable_variables = self.trainable_variables 
-    checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
-    #trainable_variables = [ layer.trainable_variables for layer in self.vol_part] #or trainable_weights 
-    #trainable_variables = self.vol_part.trainable_variables
-    valid_loss = [1]
-    best_epoch = 0
-    for layer in self.vol_part:
-        layer.trainable=True
-    ## training
-    for i in range( n_epochs):
-        with tf.GradientTape() as tape:
-            y_pred = self.predict_vol( x_train, training=True )
-            train_loss = loss( y_train, y_pred )
-        gradients = tape.gradient( train_loss, trainable_variables)
-        optimizer.apply_gradients( zip(gradients, trainable_variables) )
-        if not (x_valid is None and y_valid is None):
-            valid_loss.append( loss( y_valid, self.predict_vol( x_valid)).numpy() ) 
-            if valid_loss[-1] < valid_loss[best_epoch]:
-                checkpoint_manager.save() 
-    ## restore the best model and freeze the layers
-    if not (x_valid is None and y_valid is None):
-        checkpoint.restore( checkpoint_manager.latest_checkpoint)
-    if freeze:
-        for layer in self.vol_part:
-            layer.trainable=False
-    return valid_loss
- 
 
   def call(self, x, vol=None, training=False):
     """
@@ -381,12 +283,6 @@ class ConvoCombo( Model):
     return x + x_vol
 
 
-
-  def predict_vol( self, x, training=False):
-    """ take the volume fraction and predict the heat conductivity"""
-    for layer in self.vol_part:
-        x = layer( x, training=training)
-    return x
 
 
   def predict( self, x):

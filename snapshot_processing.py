@@ -105,13 +105,23 @@ def correlation_function( images, fourier=False, resolution=None):
             c1 = np.conj(c1) * c1 / scaling
             c1 = ifftn(c1.real)
         elif fourier is True:
-            c1 = np.conj(c1) * c1 / scaling #(scaling**2)
+            c1 = np.conj(c1) * c1 / (scaling**2)
         else:  #Computation of truncated 2pcf
             c1 = c1.flatten()[ fourier]
-            c1 = np.conj( c1) * c1 / scaling #(scaling**2)
+            c1 = np.conj( c1) * c1 / (scaling**2)
         c11[:,i] = (c1.real ).flatten()
-    print( 'DISCLAIMER REALLY IMPORTANT\n The 2pcf in fourier is buggy, but everything has been computed that way, FOR THE NEXT STEP RETRAIN THE ANN (because the scaling was off (correct scaling commented out)) RB is normed -> no retraining required' )
     return c11
+
+def process_pcf_images( pcf ):
+    """ 
+    set the pcf to a logarithmic scale and filter out the volume
+    fraction since this is the biggest number and messes up the number
+    scale.   Also Returns the volume fraction
+    """
+    get_vol = ( slice(None), *(pcf.ndim-1)*[0] )
+    vol = pcf[ get_vol]**0.5
+    return np.log( np.maximum( 1e-15, pcf)), vol
+
 
 
 def process_snapshots( snapshots, fourier_space=False, scaletype='fscale'):
@@ -175,16 +185,16 @@ def pcf_redundancy_transformation( snapshots, inverse=False):
         n_hermit        = snapshots.shape[1]
         sym_slice       = [slice(None), slice( n_hermit-2, 0, -1) ]#slice over all samples in the compressed direction (always axis 0 of image)
         line_slice      = (*sym_slice, *(ndim-1)*[0] )
-        #line_dim_expansion = (slice(None), *(ndim-1)*[None] ) #lead to bugs
         left_insertion  = ( slice(None), slice(None), *(ndim-1)*[0] )
-        block_inversion = ( *sym_slice, *(ndim-1)*[slice(None,0,-1)] )
-        block_insertion = (slice(None), slice(None), *(ndim-1)*[slice( 1, None, None)] )
+        # i think this isn't entirely general for n-d images
+        block_inversion = ( *sym_slice, slice(None,0,-1), *(max([0,ndim-2]))*[slice( None,None, -1)])
+        block_insertion = (slice(None), slice(None), slice( 1, None, None), *(max([0,ndim-2]))*[slice( None)] )
+        #block_insertion = (slice(None), slice(None), *(ndim-1)*[slice( 1, None, None)] )
         lower_shape     = np.array( snapshots.shape)
         lower_shape[1] -= (1 + (n_hermit % 2) )
         lower_part      = np.zeros( lower_shape)
-        print( 'created a new array of shape {} which shalle be assemlbed to the original {}'.format( snapshots.shape, lower_part.shape) )
         #reassemble the block
-        left_slice      = snapshots[line_slice]#[line_dim_expansion] 
+        left_slice      = snapshots[line_slice]
         lower_block     = snapshots[ block_inversion]
         lower_part[ left_insertion]  = left_slice
         lower_part[ block_insertion] = lower_block
