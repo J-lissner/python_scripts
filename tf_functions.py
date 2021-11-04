@@ -1,24 +1,32 @@
 import tensorflow as tf
 
 #@tf.function decorator not written here, because it does not allow to train multiple ANN
-def train_step(x, y, model, loss_object):
+def train_step(x, y, model, loss_object, **model_kwargs):
     """
     Compute the gradients of the loss w.r.t. the trainable variables of the model
-    Input:
-        x           training data 
-        y           training target
-        model       ANN, tf.keras.Model
-        loss_object loss from tf.keras.losses (or self defined)
+    Parameters:
+    -----------
+    x:              tensorflow.tensor like
+                    training input data aranged row wise (each row 1 sample)
+    x:              tensorflow.tensor like
+                    training output data aranged row wise 
+    model:          tf.keras.Model object
+                    model which predicts the training data
+    loss_object:    tf.keras.losses (or self defined)
+                    loss object/function to evaluate the loss
+    **model_kwargs: keyworded arguments, no defaults
+                    additional kwargs for the model call
     """
     with tf.GradientTape() as tape:
-        y_pred = model(x, training=True )
+        y_pred = model(x, training=True, **model_kwargs )
         loss = loss_object( y, y_pred )
     gradients = tape.gradient( loss, model.trainable_variables)
     return gradients, loss, y_pred
 
 
-def evaluation( x, y, model, loss_object):
-    y_pred = model( x, training=False)
+def evaluation( x, y, model, loss_object, **model_kwargs):
+    """ Simply predict the model and compute a loss, see parameters of above"""
+    y_pred = model( x, training=False, **model_kwargs)
     loss = loss_object( y, y_pred)
     return y_pred, loss
 
@@ -83,8 +91,8 @@ def batch_data( x, y, n_batches, shuffle=True):
     n_samples = y.shape[0]
     if shuffle:
         permutation = tf.random.shuffle( tf.range( n_samples) )
-        x = x[permutation]
-        y = y[permutation]
+        x = tf.gather( x, permutation)
+        y = tf.gather( y, permutation)
     batchsize = tf.math.floor( n_samples/ n_batches)
     i = -1 # set a value that for n_batches=1 it does return the whole set
     for i in range( n_batches-1):

@@ -45,11 +45,11 @@ class Conv2DPeriodic( Conv2D):
         else: 
             self.k_size = args[1]
 
-    def __call__(self, data):
+    def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
-            return super().__call__( data)
+            return super().__call__( data, *args, **kwargs)
         elif self.pad in ['same', 'same_periodic']:
-            return super().__call__( pad_periodic( self.k_size, data) ) 
+            return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
             raise Exception( 'requested padding is not implemented yet')
 
@@ -81,11 +81,11 @@ class AvgPool2DPeriodic( AveragePooling2D):
             self.k_size = args[0]
 
 
-    def __call__(self, data):
+    def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
-            return super().__call__( data)
+            return super().__call__( data, *args, **kwargs)
         elif self.pad in ['same', 'same_periodic']:
-            return super().__call__( pad_periodic( self.k_size, data) ) 
+            return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
             raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
 
@@ -116,11 +116,11 @@ class MaxPool2DPeriodic( MaxPool2D):
             self.k_size = args[0]
 
 
-    def __call__(self, data):
+    def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
-            return super().__call__( data)
+            return super().__call__( data, *args, **kwargs)
         elif self.pad in ['same', 'same_periodic']:
-            return super().__call__( pad_periodic( self.k_size, data) ) 
+            return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
             raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
 

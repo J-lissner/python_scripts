@@ -19,7 +19,7 @@ class Model( Model):
         super( Model, self).__init__()
         self.architecture = []
 
-    def call(self, x, training=False):
+    def call(self, x, training=False, *args, **kwargs):
         for layer in self.architecture:
             x = layer( x, training=training)
         return x
@@ -154,9 +154,9 @@ class AutoEncoder( Model):
 
 ##################### Convolutional Neural Networks ##################### 
 class InceptionLike( Model):
-  def __init__( self, output_size, input_size, activation=None, n_blocks=1, globalpool=False, *args, **kwargs):
+  def __init__( self, n_output, input_size, activation=None, n_blocks=1, globalpool=False, *args, **kwargs):
     """
-    output_size: int, size output
+    n_output: int, size output
     input_size: int, size input
     activation: activation function in all layers
     globalpool: if global average pooling should be conducted before flattening 
@@ -165,7 +165,7 @@ class InceptionLike( Model):
     self.n_blocks = n_blocks
     self.activation = activation
     self.input_size = input_size
-    self.output_size = output_size
+    self.n_output = n_output
     self.globalpool = globalpool
     self.build_model()
 
@@ -219,7 +219,7 @@ class InceptionLike( Model):
     self.dense.append( BatchNormalization() ) 
     self.dense.append( Dense( 16, activation='selu') ) 
     self.dense.append( BatchNormalization() ) 
-    self.dense.append( Dense( self.output_size) ) 
+    self.dense.append( Dense( self.n_output) ) 
 
 
   def call( self, images):
@@ -246,7 +246,16 @@ class InceptionLike( Model):
 
 
 class TranslationInvariant( Model):
-  def __init__( self, output_size, input_size, strides=1, globalpool=True, downsample=False, *args, **kwargs):
+  """ 
+  here we attempt to have a fully translational invariant neural network
+  by implementing periodic padding etc. and using globalpool at the end to
+  lose the relative position of each convolution feature. 
+  It turns out that it does not quite work that way and we only achieve 
+  true a priori transltion invariance for no stride and globalpool (which
+  is a shit prescription on the model because then the resolution doesn't 
+  downsample and we have so many fucking pixels throughout the whole image
+  """
+  def __init__( self, n_output, input_size, strides=1, globalpool=True, downsample=False, *args, **kwargs):
     super().__init__()
     
     self.architecture = []
@@ -264,11 +273,71 @@ class TranslationInvariant( Model):
     #model.append( Dense( 64) )
     model.append( Dense( 32, activation='selu') )
     model.append( Dense( 16, activation='selu') )
-    model.append( Dense( output_size) ) 
+    model.append( Dense( n_output) ) 
 
-  def call( self, x):
-      for layer in self.architecture:
-          x = layer( x)
-      return x
+
+class GenericCnn( Model):
+  def __init__( self, n_output, dense=[256,128,64,32], activation='selu', batch_norm=True, pre_pool=0, **conv_architecture ):
+    """
+    Get a generic deep conv net
+    Parameters:
+    -----------
+    n_output:       int
+                    size of output
+    dense:          list like of ints, default [256,128,64,32]
+                    dense layer after pooling
+    activation:     str or list like of str, default 'selu'
+                    activation function for dense layer 
+    batch_norm:     bool, default True
+                    whether to apply batch normalization after dense and pooling
+    pre_pool:       int, default 0
+                    downsampling of resolution of input image via average pooling
+    **conv_architecture with default values:
+    kernels:        list like of ints, default [11,7,5,3,3]
+                    dimension of each kernel, len(kernels) == n_conv
+    strides:        list like of ints, default [4,3,3,2,2]
+                    stride of each kernel, has to match len( kernels)
+    filters:        list like of ints, default [32,32,64,64,96]
+                    number of channels per layer, has to match len( kernels)
+    pooling:        bool or list of ints, default True
+                    if booling should be applied after every layer,
+                    can be specified with ints
+    Returns:
+    --------
+    None:           builds the model in self.architecture
+    """
+    #then also try if a parallel model with downsampled inputs is good
+    super().__init__()
+    model = self.architecture #gotten from super
+    ## input preprocessing
+    kernels = conv_architecture.pop( 'kernels', [11,7,5,3,3])
+    strides = conv_architecture.pop( 'strides', [4,3,3,2,2])
+    filters = conv_architecture.pop( 'filters', [32,32,64,64,96])
+    pooling = conv_architecture.pop( 'pooling', True)
+    n_conv = len( kernels)
+    n_dense = len( dense)
+    if isinstance( pooling, bool) and pooling is True:
+        pooling = n_conv*[2]
+    elif isinstance( pooling, int):
+        pooling = n_conv*[pooling]
+    else:
+        pooling = n_conv*[False]
+    if isinstance( activation, str) or activation is None:
+        activation = (n_conv+n_dense)*[activation]
+    ## model building
+    if pre_pool:
+        model.append( AvgPool2DPeriodic( pre_pool) )
+    for i in range( n_conv):
+        model.append( Conv2DPeriodic( filters[i], kernels[i], strides[i], activation=activation[i] ) )
+        if pooling[i]:
+            model.append( MaxPool2DPeriodic( pooling[i] ) )
+    model.append( Flatten() )
+    model.append( BatchNormalization())
+    for i in range( n_dense):
+        model.append( Dense( dense[i], activation=activation[i+n_conv]) )
+        if batch_norm:
+            model.append(  BatchNormalization() )
+    model.append( Dense( n_output) )
+
 
 
