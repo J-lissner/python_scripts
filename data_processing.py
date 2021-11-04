@@ -283,7 +283,7 @@ class CrossValidation():
 
 
 
-def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
+def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None):
     """
     Generator/Factory function, yields 'n_batches' batches when called as
     a 'for loop' argument.  The last batch is the largest if the number of
@@ -304,6 +304,11 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
     stochastic:     float, default 0.5
                     if the data should be stochastically picked, has to be <=1
                     only available if <shuffle> is True
+    x_extra:        numpy array
+                    additional input data, asserts that len(x) == len( x_extra)
+    y_extra:        numpy array
+                    additional output data
+                    
     Returns:
     -------
     data_batches    list
@@ -314,16 +319,91 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0):
         permutation = np.random.permutation( n_samples )
         x = x[ permutation]
         y = y[ permutation]
+        if x_extra is not None:
+            x_extra = x_extra[ permutation]
+            y_extra = y_extra[ permutation]
     else:
         stochastic = 0
     batchsize = int( n_samples // n_batches * (1-stochastic) )
     max_sample = int( n_samples* (1-stochastic) )
     i = -1 #to catch errors for n_batches == 1
     batches = []
+    batches_extra = []
     for i in range( n_batches-1):
-        batches.append( ( x[i*batchsize:(i+1)*batchsize], y[i*batchsize:(i+1)*batchsize] ))
-    batches.append( ( x[ (i+1)*batchsize:max_sample ], y[(i+1)*batchsize:max_sample ] ))
-    return batches
+        ii = i*batchsize
+        jj = (i+1)*batchsize
+        batches.append( ( x[ii:jj], y[ii:jj] ) )
+        if x_extra is not None:
+            batches_extra.append( ( x_extra[ii:jj], y_extra[ii:jj] ))
+    batches.append( ( x[ jj:max_sample ], y[jj:max_sample ] ))
+    if x_extra is not None:
+        batches_extra.append( ( x_extra[ jj:max_sample ], y_extra[jj:max_sample ] ))
+    if x_extra is None:
+        return batches
+    else: 
+        return batches, batches_extra
+
+def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, shuffle=True):
+    """
+    Augment the periodic image data by rolling some images randomly.
+    Augments by n_samples*augmentation and rolls the same images multiple
+    times if specified by multi roll, i.e. default arguments take 1/4 of 
+    the images for augmentation.  Does not match the number of samples 
+    exactly, i.e. n_samples % multi_roll > 0 then the few augmented 
+    samples are just not added.
+    Parameters:
+    -----------
+    images:         numpy nd-array
+                    images of shape (n_samples x 'res x olu x tion' x n_channels )
+    y:              numpy nd-array
+                    target value to copy due to augmentation
+    augmentation:   float, default 0.5
+                    how much % new samples should be added
+    multi_roll:     int >= 1, default 2
+                    if randomly selected images should be rolled multiple 
+                    times and added multiple times to the set
+    shuffle:        bool, default True
+                    if images should be shuffled. If False then the data 
+                    will be returned in order as (images, augmented_images)
+    Returns:
+    --------
+    images:         numpy nd-array
+                    augmented image data
+    y:              numpy nd-array
+                    corresponding target values to image data
+    """
+    #input preprocessing and variable allocation
+    multi_roll = max( (multi_roll, 1) )
+    n_samples = images.shape[0]
+    n_augmented = n_samples * augmentation
+    permutation = np.random.permutation( n_samples)
+    if shuffle:
+        images = images[ permutation] 
+    n_augmented = int( n_augmented // multi_roll )
+    roll_limits = images.shape [1:-1]
+    ndim = len( roll_limits)
+    low = np.zeros( ndim, dtype=int)
+    ## image augmentation by rolling random samples
+    augmented_images = []
+    y_extra = []
+    for _ in range( multi_roll): #roll same sample multiple times
+        rolling = np.random.randint( low, roll_limits, size=(n_augmented, ndim ) )
+        y_extra.append( y[permutation[:n_augmented]] )
+        for i in range( n_augmented): #roll and append samples
+            image = images[ permutation[i]].reshape( 1, *roll_limits, -1)
+            augmented_images.append( np.roll( image, rolling[i], axis=range( 1, ndim+1) ) )
+    permutation = np.random.permutation( n_augmented*multi_roll)
+    augmented_images = np.concatenate( augmented_images, axis=0 )[permutation]
+    y_extra = np.concatenate( y_extra, axis=0)[permutation]
+    if shuffle:
+        permutation = np.random.permutation( n_samples + n_augmented*multi_roll)
+        images = np.concatenate( (images, augmented_images), axis=0 )[permutation]
+        y = np.concatenate( (y, y_extra), axis=0)[permutation]
+    else:
+        images = np.concatenate( (images, augmented_images), axis=0 )
+        y = np.concatenate( (y, y_extra), axis=0) 
+    return images, y
+
 
 
 def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0):
