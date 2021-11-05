@@ -3,21 +3,25 @@ import h5py
 from math import ceil, floor
 
 ##################### GENERAL DATA TRANSFORMATION FOR ARBITRARY DATA ####################
-def split_data( inputs, outputs, split=0.3, shuffle=True):
+def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, slave_outputs=None):
     """ 
     Randomly shuffle the data and thereafter split it into two sets 
     Arranges the data row-wise if it is given column wise (return arrays, each row one sample)
     (Note that this function assumes that there are more samples than dimensions of the problem)
     Parameters:
     -----------
-    inputs:     numpy nd-array
-                input data (preferably) arranged row wise
-    outputs:    numpy nd-array
-                output data (preferably) arranged row wise
-    split:      float, default 0.3
-                percentage part of the second set (validation set)
-    shuffle:    bool, default True
-                Whether the data should be randomly shuffled before splitting
+    inputs:         numpy nd-array
+                    input data (preferably) arranged row wise
+    outputs:        numpy nd-array
+                    output data (preferably) arranged row wise
+    split:          float, default 0.3
+                    percentage part of the second set (validation set)
+    shuffle:        bool, default True
+                    randomly shuffly the data before splitting
+    slave_inputs:   numpy nd-array, default None
+                    Any dependend input data which should be split analogously
+    slave_outputs:  numpy nd-array, default None
+                    Any dependend output data which should be split analogously
     Returns:
     --------
     x_train, y_train, x_valid, y_valid:     nd-numpy arrays
@@ -39,7 +43,19 @@ def split_data( inputs, outputs, split=0.3, shuffle=True):
         shuffle = np.random.permutation(n_data)
         inputs = inputs[shuffle]
         outputs = outputs[shuffle]
-    return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:]
+        if slave_inputs is not None:
+            slave_inputs = slave_inputs[shuffle]
+        if slave_outputs is not None:
+            slave_outputs = slave_outputs[shuffle]
+    if slave_inputs is None and slave_outputs is None: 
+        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:]
+    elif slave_outputs is None:
+        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_inputs[:n_train], slave_inputs[n_train:]
+    elif slave_inputs is None:
+        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_outputs[:n_train], slave_outputs[n_train:]
+    else:
+        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_inputs[:n_train], slave_inputs[n_train:], slave_outputs[:n_train], slave_outputs[n_train:]
+
 
 
 def filter_samples( x, y, xmin=None, xmax=None, ymin=None, ymax=None ):
@@ -321,6 +337,7 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
         y = y[ permutation]
         if x_extra is not None:
             x_extra = x_extra[ permutation]
+        if y_extra is not None:
             y_extra = y_extra[ permutation]
     else:
         stochastic = 0
@@ -328,22 +345,26 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     max_sample = int( n_samples* (1-stochastic) )
     i = -1 #to catch errors for n_batches == 1
     batches = []
-    batches_extra = []
     for i in range( n_batches-1):
+        current_batch = []
         ii = i*batchsize
         jj = (i+1)*batchsize
-        batches.append( ( x[ii:jj], y[ii:jj] ) )
+        current_batch.extend( ( x[ii:jj], y[ii:jj] ) )
         if x_extra is not None:
-            batches_extra.append( ( x_extra[ii:jj], y_extra[ii:jj] ))
-    batches.append( ( x[ jj:max_sample ], y[jj:max_sample ] ))
+            current_batch.append( x_extra[ii:jj] )
+        if y_extra is not None:
+            current_batch.append( y_extra[ii:jj] )
+        batches.append( current_batch)
+    current_batch = []
+    current_batch.extend( ( x[ jj:max_sample ], y[jj:max_sample ] ))
     if x_extra is not None:
-        batches_extra.append( ( x_extra[ jj:max_sample ], y_extra[jj:max_sample ] ))
-    if x_extra is None:
-        return batches
-    else: 
-        return batches, batches_extra
+        current_batch.append( x_extra[ jj:max_sample ] )
+    if y_extra is not None: 
+        current_batch.append( y_extra[jj:max_sample ] )
+    batches.append( current_batch )
+    return batches
 
-def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, shuffle=True):
+def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=None, shuffle=False ):
     """
     Augment the periodic image data by rolling some images randomly.
     Augments by n_samples*augmentation and rolls the same images multiple
@@ -362,9 +383,11 @@ def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, shuffle=
     multi_roll:     int >= 1, default 2
                     if randomly selected images should be rolled multiple 
                     times and added multiple times to the set
-    shuffle:        bool, default True
+    shuffle:        bool, default False
                     if images should be shuffled. If False then the data 
                     will be returned in order as (images, augmented_images)
+    x_extra:        numpy nd-array, default None
+                    additional input data which should be copied for augmentation
     Returns:
     --------
     images:         numpy nd-array
@@ -384,25 +407,36 @@ def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, shuffle=
     ndim = len( roll_limits)
     low = np.zeros( ndim, dtype=int)
     ## image augmentation by rolling random samples
-    augmented_images = []
-    y_extra = []
+    images_augm = []
+    y_augm = []
+    x_augm = []
+    # creation of augmented data
     for _ in range( multi_roll): #roll same sample multiple times
         rolling = np.random.randint( low, roll_limits, size=(n_augmented, ndim ) )
-        y_extra.append( y[permutation[:n_augmented]] )
+        y_augm.append( y[permutation[:n_augmented]] )
+        if x_extra is not None:
+            x_augm.append( x_extra[permutation[:n_augmented]] )
         for i in range( n_augmented): #roll and append samples
             image = images[ permutation[i]].reshape( 1, *roll_limits, -1)
-            augmented_images.append( np.roll( image, rolling[i], axis=range( 1, ndim+1) ) )
+            images_augm.append( np.roll( image, rolling[i], axis=range( 1, ndim+1) ) )
+    #shuffling of augmented data
     permutation = np.random.permutation( n_augmented*multi_roll)
-    augmented_images = np.concatenate( augmented_images, axis=0 )[permutation]
-    y_extra = np.concatenate( y_extra, axis=0)[permutation]
+    images_augm = np.concatenate( images_augm, axis=0 )[permutation] 
+    y_augm = np.concatenate( y_augm, axis=0)[permutation] 
+    if x_extra is not None:
+        x_augm = np.concatenate( x_augm, axis=0)[permutation] 
+    #optional shuffle of whole set and return
     if shuffle:
         permutation = np.random.permutation( n_samples + n_augmented*multi_roll)
-        images = np.concatenate( (images, augmented_images), axis=0 )[permutation]
-        y = np.concatenate( (y, y_extra), axis=0)[permutation]
     else:
-        images = np.concatenate( (images, augmented_images), axis=0 )
-        y = np.concatenate( (y, y_extra), axis=0) 
-    return images, y
+        permutation = slice(None)
+    images = np.concatenate( (images, images_augm), axis=0 )[permutation]
+    y = np.concatenate( (y, y_augm), axis=0)[permutation]
+    if x_extra is not None:
+        x_extra = np.concatenate( [x_extra, x_augm], axis=0)[permutation]
+        return images, y, x_extra
+    else:
+        return images, y
 
 
 

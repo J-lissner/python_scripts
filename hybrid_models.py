@@ -5,6 +5,8 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
+
+import data_processing as get
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from other_functions import Cycler
 
@@ -19,11 +21,12 @@ class VolBypass( Model): #previously called 'SeparateVol'
   """
   def __init__( self, n_output, *args, **kwargs):
     super( VolBypass, self).__init__()
-    self.build_vol( n_output)
-    self.build_regressor( n_output)
+    self.n_output = n_output
+    self.build_vol( )
+    self.build_regressor( )
 
 
-  def build_vol(self, n_output, n_neurons=5, activation='selu'):
+  def build_vol(self, n_neurons=5, activation='selu'):
     """ 
     build the architecture of the upper bypass layer which connects the
     first input neuron directly to the output layer. it has one hidden
@@ -40,10 +43,10 @@ class VolBypass( Model): #previously called 'SeparateVol'
     self.vol_part = []
     if isinstance( n_neurons, int ) and n_neurons > 0:
         self.vol_part.append( Dense( n_neurons, activation=activation ) )
-    self.vol_part.append( Dense( n_output, activation=None ) ) 
+    self.vol_part.append( Dense( self.n_output, activation=None ) ) 
 
 
-  def build_regressor(self, n_output, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
+  def build_regressor(self, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
     """
     build the architecture of the remaining Dense model.
     parameters:
@@ -65,10 +68,10 @@ class VolBypass( Model): #previously called 'SeparateVol'
         self.regressor.append( Dense( n_neurons, activation=next(activation)) )
         if batch_normalization:
             self.regressor.append( BatchNormalization() )
-    self.regressor.append( Dense( n_output) )
+    self.regressor.append( Dense( self.n_output) )
 
                 
-  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=150, **trainers):
+  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=50, **trainers):
     """
     NOTE: before calling this function the model has to be called that
     it is precompiled. Otherwise no training happens.
@@ -83,13 +86,22 @@ class VolBypass( Model): #previously called 'SeparateVol'
                 validation data #todo
     freeze:     bool, default True
                 whether or not to freeze the weights after training
-    **trainers: kwargs for the training parameters #see below
-    n_epochs:   int, default 150
+    n_epochs:   int, default 50
+                how many epochs to train the model
+    **trainers: default kwargs for the training parameters 
+    learning_rate:  float, default 0.05
+                    learning rate during optimization
+    optimizer:      tf.keras.optimizers object, default ...optimizers.Adam
+                    optimizer for learning
+    loss:           tf.keras.losses object, default ..losses.MeanSquaredError()
+                    loss to optimize with 
     """
     ## inputs and preprocessing
     learning_rate =  trainers.pop( 'learning_rate', 0.05 )
     optimizer         = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
     loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
+    if trainers:
+        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
     trainable_variables = self.trainable_variables 
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
     checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
@@ -119,33 +131,38 @@ class VolBypass( Model): #previously called 'SeparateVol'
     return valid_loss
  
 
-  def freeze_vol( self):
+  def freeze_vol( self, freeze=True):
     """ freeze the layers of the volume fraction linking to the output layer"""
     for layer in self.vol_part:
-        layer.trainable=False
-
+        layer.trainable = not freeze
 
 
   def call(self, x, training=False):
+    """ call function given a feature vector which has the volume
+    fraction in the first dimension, and the remaining features in
+    the rest"""
     x_vol = self.predict_vol( tf.reshape( x[:,0], (-1, 1) ) )
     x = x[:,1:]
     for layer in self.regressor:
         x = layer(x)
     return x + x_vol
 
+
   def predict_vol( self, x, training=False):
     """ take the volume fraction and predict the outputs"""
-    x = tf.reshape( x[:,0], ( -1, 1) ) #this line might be unneccesary
+    x = tf.reshape( x[:,0], ( -1, 1) ) 
     for layer in self.vol_part:
         x = layer( x, training=training)
     return x
 
 
-  def predict( self, x):
-    return self( x, training=False )
+  def predict( self, x, training=False):
+    """ simply shadow call """
+    return self( x, training )
 
 
   def predict_validation( self, x):
+    """ simply shadow call with training hardwired """
     return self( x, training=False )
 
 
@@ -161,9 +178,9 @@ class ConvoCombo( VolBypass):
     super( ConvoCombo, self).__init__( n_output, *args, **kwargs)
     # above command should also build vol and build regressor
     self.build_extractor()
-    self.build_regressor( n_output, neurons=[ 500, 300, 100, 50] )
-    #self.build_vol( n_output)
-    #self.build_regressor( n_output)
+    self.build_regressor( neurons=[ 500, 300, 100, 50] )
+    #self.build_vol( )
+    #self.build_regressor( )
 
 
   def build_extractor( self, activation='relu'):
@@ -264,9 +281,6 @@ class ConvoCombo( VolBypass):
     return concatenate( [x, x_pool])
 
 
-                
-
-
   def call(self, x, vol=None, training=False):
     """
     Predict the model outputs given the image inputs.
@@ -283,12 +297,191 @@ class ConvoCombo( VolBypass):
     return x + x_vol
 
 
+class FullCombination( ConvoCombo ):
+  """ build a model in 4 parts, small vol bypass at the top, small-ish
+  sized dense model from the scalar features, small-ish dense from the 
+  convolutional features, as well as a model combining all higher
+  level features """
+  def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
+    """
+    Parameters:
+    -----------
+    bayesian_ouptut:    bool, default False #TO BE IMPLEMENTEd
+                        whether to use bayesian layers/probability prediction
+    """
+    super( FullCombination, self).__init__( n_output, *args, **kwargs)
+    self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
+    self.bayesian = bayesian_output
+    self.n_output = n_output
+    self.build_feature_regressor()
+    self.build_connector()
 
 
-  def predict( self, x):
-    return self( x, training=False )
+  def build_connector( self, neurons=[ 160, 100, 60, 30], activation='selu', batch_normalization=True ):
+    self.connector = []
+    layers = self.connector
+    if self.bayesian:
+        pass #TODO TO BE IMPLEMENTED 
+    else: 
+        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    for i in range( len( neurons)):
+        layers.append( layer( neurons[i] ) )
+        if batch_normalization:
+            layers.append( BatchNormalization() )
+    layers.append( Dense( self.n_output) )
 
 
-  def predict_validation( self, x):
-    return self( x, training=False )
+  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
+    self.feature_regressor = []
+    layers = self.feature_regressor
+    if self.bayesian:
+        pass #TODO TO BE IMPLEMENTED 
+    else: 
+        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    for i in range( len( neurons)):
+        layers.append( layer( neurons[i] ) )
+        if batch_normalization:
+            layers.append( BatchNormalization() )
+    layers.append( Dense( self.n_output) )
 
+
+  def freeze_feature_predictor( self, freeze=True):
+    """ freeze or unfreeze the feature predictor """
+    for layer in self.feature_regressor:
+        layer.trainable = not freeze
+
+
+  def freeze_full_cnn( self, freeze=True):
+    """freeze the full part of the pure CNN part, i.e. feature
+    extraction and prediction on the CNN part """
+    for block in self.inception_1:
+        for layer in block:
+            layer.trainable = not freeze
+
+
+  def pretrain_features( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_batches=6, n_epochs=1000, **trainers):
+    """
+    For the documentation see 'self.pretrain_vol', it is literally the 
+    same only that it trains here a different part of the model
+    Additional Parameters:
+    ---------- -----------
+    n_batches:      int, default 6
+                    how many batches to do (required for batch normalization)
+    """
+    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
+    optimizer = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
+    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
+    if trainers:
+        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
+    trainable_variables = self.trainable_variables 
+    checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
+    valid_loss = [1]
+    best_epoch = 0
+    for layer in self.feature_regressor:
+        layer.trainable=True
+    ## training
+    for i in range( n_epochs):
+      batched_data = get.batch_data( x_train, y_train, n_batches )
+      for x_batch, y_batch in batched_data: #have to do batching for batch normalization
+         with tf.GradientTape() as tape:
+            y_vol = self.predict_vol( x_batch, training=False )
+            y_feature = self.predict_features( x_batch, training=True)
+            train_loss = loss( y_batch, y_vol+y_feature )
+         gradients = tape.gradient( train_loss, trainable_variables)
+         optimizer.apply_gradients( zip(gradients, trainable_variables) )
+      if not (x_valid is None and y_valid is None):
+          y_pred = self.predict_vol( x_valid, training=False)
+          y_pred += self.predict_features( x_valid, training=False)
+          valid_loss.append( loss( y_valid, y_pred).numpy() ) 
+          if valid_loss[-1] < valid_loss[best_epoch]:
+              checkpoint_manager.save() 
+    ## restore the best model and freeze the layers
+    if not (x_valid is None and y_valid is None):
+        checkpoint.restore( checkpoint_manager.latest_checkpoint)
+    if freeze:
+        self.freeze_feature_predictor()
+    return valid_loss
+
+
+  def pretrain_cnn( self, x_train, img_train, y_train, x_valid=None, img_valid=None, y_valid=None, n_batches=8, n_epochs=75, **trainers):
+    """
+    For the documentation see 'self.pretrain_vol', it is literally the 
+    same only that it trains here a different part of the model
+    This function will unfreeze the 'upper dense part' unconditionally!
+    Additional Parameters:
+    ---------- -----------
+    img_train:      numpy nd-array
+                    image data of shape n_samples x res... x n_channels
+    img_valid:      numpy nd-array, default None
+                    additional optional validation image data 
+    n_batches:      int, default 8
+                    how many batches to do (required for batch normalization)
+    freeze:         was removed, existed in the upper function
+    """
+    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
+    optimizer = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
+    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
+    if trainers:
+        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
+    trainable_variables = self.trainable_variables 
+    checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
+    valid_loss = [1]
+    best_epoch = 0
+    self.freeze_vol()
+    self.freeze_feature_predictor()
+    ## training
+    for i in range( n_epochs):
+      batched_data = get.batch_data( x_train, y_train, n_batches, x_extra=img_train )
+      for x_batch, y_batch, img_batch in batched_data:
+         y_vol = self.predict_vol( x_batch, training=False )
+         y_feature = self.predict_features( x_batch, training=True)
+         with tf.GradientTape() as tape:
+            y_cnn = self.extract_features( img_batch, training=True)
+            for layer in self.regressor:
+                y_cnn = layer( y_cnn, training=True)
+            train_loss = loss( y_batch, y_cnn + y_vol + y_feature )
+         gradients = tape.gradient( train_loss, trainable_variables)
+         optimizer.apply_gradients( zip(gradients, trainable_variables) )
+      if not (x_valid is None and y_valid is None):
+          y_pred = self.predict_vol( x_valid, training=False)
+          y_pred += self.predict_features( x_valid, training=False)
+          y_cnn = self.extract_features( img_valid, training=True)
+          for layer in self.regressor:
+              y_cnn = layer( y_cnn, training=True)
+          valid_loss.append( loss( y_valid, y_cnn + y_pred).numpy() ) 
+          if valid_loss[-1] < valid_loss[best_epoch]:
+              checkpoint_manager.save() 
+    ## restore the best model and freeze the layers
+    if not (x_valid is None and y_valid is None):
+        checkpoint.restore( checkpoint_manager.latest_checkpoint)
+    self.freeze_feature_predictor( False)
+    return valid_loss
+
+
+  #def extract_features( inherited)
+  #def predict_vol( inherited)
+  def predict_features( self, x, training=False):
+    """ only predict the part taking all of the features """
+    x = x[:,1:]
+    for layer in self.feature_regressor:
+        x = layer( x, training=training)
+    return x
+
+
+  def call( self, features, images, training=False):
+    # predict the volume fraction, features
+    x_vol = self.predict_vol( features, training=training)
+    x_features = self.predict_features( features, training=training)
+    # predict cnn
+    cnn_features = self.extract_features( images, training=training )
+    x_cnn = cnn_features
+    for layer in self.regressor:
+        x_cnn = layer( x_cnn, training=training) 
+    #prediction of connection between cnn and manual features
+    x_combined = concatenate( [features, cnn_features])
+    for layer in self.connector:
+        x_combined = layer( x_combined, training=training )
+    return x_vol + x_features + x_cnn + x_combined
+        
