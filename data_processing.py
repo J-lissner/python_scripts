@@ -111,10 +111,11 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     Compute a shift based on data and apply it to slave_data
     Data has to be arranged row wise (each row one sample)
     Choose between the following scale methods:
-    'single_std1': scale each component over all samples to have 0 mean and standard devaition 1
+    'single_std1'/'default': scale each component over all samples to have 0 mean and standard devaition 1
     'combined_std1': scale all component (combined) over all samples to have 0 mean and standard devaition 1
-    '0-1': scale each component to lie on the interval [0,1]
-    '-1-1': scale each component to lie on the interval [-1,1]
+    'covariance_shift': scale by 
+    '0,1': scale each component to lie on the interval [0,1]
+    '-1,1': scale each component to lie on the interval [-1,1]
     Parameters:
     -----------
     data:   numpy nd-array
@@ -140,7 +141,10 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
             slave_data = slave_data.T
     n, m  = data.shape[:2]
     scaling = [None,None, scaletype]
-    if scaling[2] == 'single_std1':
+    if scaling[2] is None:
+        print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
+        print( "valid options are: 'single_std1', 'combined_std1', '0-1', '-1,1', try help(scale_data)\n###################################" )
+    elif scaling[2].lower() in [ 'default', 'single_std1'] :
         scaling[0] = np.mean( data, 0)
         data       = data - scaling[0]
         scaling[1] = np.sqrt( n-1) / np.sqrt( np.sum( data**2, 0)) 
@@ -152,21 +156,26 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         scaling[1] = np.sqrt( m*n-1) / np.linalg.norm( data,'fro') 
         data       = scaling[1] * data
 
-    elif scaling[2] == '0-1':
+    elif 'cov' in scaling[2].lower(): 
+        nugget = 1e-12
+        scaling[0] = data.mean( 0 )
+        data = data - scaling[0]
+        scaling[1] = np.cov( data, rowvar=False)  + nugget * np.eye(data.shape[1] )
+        #scaling[1] = np.linalg.cholesky( np.cov( data, rowvar=False)+ nugget * np.eye(data.shape[1] )) 
+        data =  data @ np.linalg.inv( scaling[1] )
+
+
+    elif '0' in scaling[2] and '1' in scaling[2]:
         scaling[0] = np.min( data, 0)
         data       = data - scaling[0]
         scaling[1] = np.max( data, 0)
         data       = data /scaling[1]
 
-    elif scaling[2] == '-1,1':  
+    elif '-1' in scaling[2] and '1' in scaling[2]:
         scaling[0] = np.min( data, 0)
         data       = data - scaling[0]      
         scaling[1] = np.max( data, 0)     
         data       = data /scaling[1] *2 -1 
-
-    else: 
-        print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
-        print( "valid options are: 'single_std1', 'combined_std1', '0-1', '-1,1', try help(scale_data)\n###################################" )
     if slave_data is not None:
         slave_data = scale_with_shifts( slave_data, scaling)
         return data, slave_data, scaling #automaticall returns the unscalinged data if a wrong scaling is specified
@@ -188,18 +197,22 @@ def scale_with_shifts( data, scaling):
     data:       numpy nd-array
                 scaled data using 'scaling' 
     """
-    if scaling[2] in [ 'single_std1', 'combined_std1']:
-        data = scaling[1] * ( data - scaling[0] ) 
-    elif scaling[2] == '0-1':
-        data = (data - scaling[0]) /scaling[1] 
-    elif scaling[2] == '-1,1':
-        data = (data - scaling[0]) /scaling[1] *2 -1 
-    else: 
+    if scaling[2] is None:
         print('Invalid scaletype given, returning raw data')
+    elif scaling[2] in [ 'single_std1', 'combined_std1']:
+        data = scaling[1] * ( data - scaling[0] ) 
+    elif  'cov' in scaling[2].lower():
+        data = (data-scaling[0]) @ np.linalg.inv( scaling[1])
+    elif '0' in scaling[2] and '1' in scaling[2]:
+        data = (data - scaling[0]) /scaling[1] 
+    elif '-1' in scaling[2] and '1' in scaling[2]:
+        data = (data - scaling[0]) /scaling[1] *2 -1 
+    else:
+        print('Invalid scaletype given, returning raw data') 
     return data
 
 
-def unscale_data( data, shift ):
+def unscale_data( data, scaling ):
     """
     Unscale the given data based on the know shift computed from 'scale_data()'
     Parameters:
@@ -213,14 +226,18 @@ def unscale_data( data, shift ):
     data:       numpy nd-array
                 unscaled data using 'scaling' 
     """
-    if shift[2] in [ 'single_std1', 'combined_std1']:
-        data = data / shift[1] + shift[0] 
-    elif shift[2] == '0-1':
-        data = data * shift[1] + shift[0] 
-    elif shift[2] == '-1,1':
-        data = (data + 1) * shift[1]/2 + shift[0]  
+    if scaling[2] is None:
+        print('Invalid scaletype given, returning raw data')
+    elif scaling[2] in [ 'single_std1', 'combined_std1']:
+        data = data / scaling[1] + scaling[0] 
+    elif  'cov' in scaling[2].lower():
+        data = (data @ scaling[1]) + scaling[0] 
+    elif '0' in scaling[2] and '1' in scaling[2]:
+        data = data * scaling[1] + scaling[0] 
+    elif '-1' in scaling[2] and '1' in scaling[2]:
+        data = (data + 1) * scaling[1]/2 + scaling[0]  
     else:
-        print('No valid scaletype given, returning raw data' )
+        print('Invalid scaletype given, returning raw data') 
     return data
 
 
@@ -363,6 +380,7 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
         current_batch.append( y_extra[jj:max_sample ] )
     batches.append( current_batch )
     return batches
+
 
 def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=None, shuffle=False ):
     """

@@ -1,5 +1,6 @@
 import tensorflow as tf
 import itertools
+from datetime import datetime
 from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
@@ -19,9 +20,23 @@ class VolBypass( Model): #previously called 'SeparateVol'
   model.pretrain_vol( *args) #has to be done in main code because of bug
   model.freeze_vol()
   """
-  def __init__( self, n_output, *args, **kwargs):
+  def __init__( self, n_output, n_vol=1, *args, **kwargs):
+    """
+    build the default model and set internal variables. Default model can
+    be overwritten by calling the 'build_*'method
+    Parameters:
+    -----------
+    n_output:       int,
+                    number of target values
+    n_vol:          int, default 1
+                    number of features taken for the vol bypass
+    """
     super( VolBypass, self).__init__()
     self.n_output = n_output
+    self.n_vol = n_vol
+    self.vol_slice = slice( 0, n_vol)
+    self.feature_slice = slice( n_vol, None)
+    self.time = lambda: datetime.now().strftime("%Y-%m-%d_%H:%M:%S")  #used in pretrain functions
     self.build_vol( )
     self.build_regressor( )
 
@@ -71,7 +86,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     self.regressor.append( Dense( self.n_output) )
 
                 
-  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=50, **trainers):
+  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=75, **trainers):
     """
     NOTE: before calling this function the model has to be called that
     it is precompiled. Otherwise no training happens.
@@ -102,9 +117,9 @@ class VolBypass( Model): #previously called 'SeparateVol'
     loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
     if trainers:
         raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
-    trainable_variables = self.trainable_variables 
+    trainable_variables = self.trainable_variables  #didn't quite work
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
     #trainable_variables = [ layer.trainable_variables for layer in self.vol_part] #or trainable_weights 
     #trainable_variables = self.vol_part.trainable_variables
     valid_loss = [1]
@@ -137,31 +152,32 @@ class VolBypass( Model): #previously called 'SeparateVol'
         layer.trainable = not freeze
 
 
-  def call(self, x, training=False):
+  def call(self, x, training=False, *args, **kwargs):
     """ call function given a feature vector which has the volume
     fraction in the first dimension, and the remaining features in
     the rest"""
-    x_vol = self.predict_vol( tf.reshape( x[:,0], (-1, 1) ) )
-    x = x[:,1:]
+    x_vol = self.predict_vol( tf.reshape( 
+        x[:,self.vol_slice], (-1, self.vol_slice.stop) ) )
+    x = x[:,self.feature_slice]
     for layer in self.regressor:
         x = layer(x)
     return x + x_vol
 
 
-  def predict_vol( self, x, training=False):
+  def predict_vol( self, x, training=False, *args, **kwargs):
     """ take the volume fraction and predict the outputs"""
-    x = tf.reshape( x[:,0], ( -1, 1) ) 
+    x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
     for layer in self.vol_part:
         x = layer( x, training=training)
     return x
 
 
-  def predict( self, x, training=False):
+  def predict( self, x, training=False, *args, **kwargs):
     """ simply shadow call """
     return self( x, training )
 
 
-  def predict_validation( self, x):
+  def predict_validation( self, x, *args, **kwargs):
     """ simply shadow call with training hardwired """
     return self( x, training=False )
 
@@ -187,7 +203,6 @@ class ConvoCombo( VolBypass):
     """
     Build the convolutional layers which extract features
     """
-    self.extractors =  []
     self.inception_1 = [ [], [], [], [], [] ]
     block_layer = self.inception_1[0]
     block_layer.append( Conv2DPeriodic( filters=15, kernel_size=17, strides=10, activation=activation)) 
@@ -375,7 +390,7 @@ class FullCombination( ConvoCombo ):
         raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
     trainable_variables = self.trainable_variables 
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
     valid_loss = [1]
     best_epoch = 0
     for layer in self.feature_regressor:
@@ -404,7 +419,7 @@ class FullCombination( ConvoCombo ):
     return valid_loss
 
 
-  def pretrain_cnn( self, x_train, img_train, y_train, x_valid=None, img_valid=None, y_valid=None, n_batches=8, n_epochs=75, **trainers):
+  def pretrain_cnn( self, x_train, img_train, y_train, x_valid=None, img_valid=None, y_valid=None, n_batches=8, n_epochs=150, **trainers):
     """
     For the documentation see 'self.pretrain_vol', it is literally the 
     same only that it trains here a different part of the model
@@ -426,7 +441,7 @@ class FullCombination( ConvoCombo ):
         raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
     trainable_variables = self.trainable_variables 
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/', max_to_keep=1)
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
     valid_loss = [1]
     best_epoch = 0
     self.freeze_vol()
@@ -464,7 +479,7 @@ class FullCombination( ConvoCombo ):
   #def predict_vol( inherited)
   def predict_features( self, x, training=False):
     """ only predict the part taking all of the features """
-    x = x[:,1:]
+    x = x[:,self.feature_slice]
     for layer in self.feature_regressor:
         x = layer( x, training=training)
     return x

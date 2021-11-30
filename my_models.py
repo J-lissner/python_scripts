@@ -4,8 +4,9 @@ from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
-from tensorflow.keras.layers import concatenate, Flatten
+from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from hybrid_models import VolBypass
 
 
 # overwrite the model to get the base call and predict_validation for default behavious
@@ -245,7 +246,7 @@ class InceptionLike( Model):
 
 
 
-class TranslationInvariant( Model):
+class TranslationInvariant( VolBypass):
   """ 
   here we attempt to have a fully translational invariant neural network
   by implementing periodic padding etc. and using globalpool at the end to
@@ -255,25 +256,98 @@ class TranslationInvariant( Model):
   is a shit prescription on the model because then the resolution doesn't 
   downsample and we have so many fucking pixels throughout the whole image
   """
-  def __init__( self, n_output, input_size, strides=1, globalpool=True, downsample=False, *args, **kwargs):
-    super().__init__()
+  def __init__( self, n_output, n_vol=1, *args, **kwargs):
+    super().__init__( n_output, n_vol, *args, **kwargs)
+    del self.regressor
+    self.build_cnn()
     
-    self.architecture = []
-    model = self.architecture
-    if downsample:
-        model.append( AvgPool2DPeriodic( downsample) )
-    model.append( Conv2DPeriodic( filters=5, kernel_size=7, strides=strides, input_shape=input_size) )
-    model.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=strides) )
-    model.append( Conv2DPeriodic( filters=15, kernel_size=3, strides=strides) )
-    #model.append( Conv2DPeriodic( filters=20, kernel_size=1, strides=strides) )
-    if globalpool:
-        model.append( GlobalAveragePooling2D() )
-    model.append( Flatten() )
-    #model.append( Dense( 128) )
-    #model.append( Dense( 64) )
-    model.append( Dense( 32, activation='selu') )
-    model.append( Dense( 16, activation='selu') )
-    model.append( Dense( n_output) ) 
+  def build_cnn( self):
+    """ build two blocks of inception modules with an average globalpooling at the end"""
+    stride = 1  #for true translational invariance 
+    self.inception1 = [ [], [], [], [], []]
+    huge = self.inception1[0]
+    huge.append( Conv2DPeriodic( filters=10, kernel_size=15, strides=stride, activation='relu') )
+    huge.append( Conv2DPeriodic( filters=10, kernel_size=11, strides=stride, activation='relu') )
+    huge.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
+    huge.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    large = self.inception1[1]
+    large.append( Conv2DPeriodic( filters=10, kernel_size=11, strides=stride, activation='relu') )
+    large.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
+    large.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    medium= self.inception1[2]
+    medium.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
+    medium.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    medium.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    small = self.inception1[3]
+    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    layer_concat = self.inception1[-1]
+    layer_concat.append( Concatenate())
+    layer_concat.append( Conv2D( filters=30, kernel_size=1, strides=stride, activation='selu'))
+    layer_concat.append( BatchNormalization() )
+
+    self.inception2 = [ [], [], [], [] ]
+    big = self.inception2[0]
+    big.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
+    big.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    medium = self.inception2[1]
+    medium.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    medium.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    small = self.inception2[2]
+    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    layer_concat = self.inception2[-1]
+    layer_concat.append( Concatenate())
+    layer_concat.append( Conv2D( filters=15, kernel_size=1, strides=stride, activation='selu'))
+    layer_concat.append( BatchNormalization() )
+    layer_concat.append( Flatten() )
+
+    self.regressor = []
+    self.regressor.append( Dense( 1000, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 500, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 200, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 100, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 50, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( self.n_output ) )
+
+
+  def call( self, vol, images, training=False, *args, **kwargs):
+    x_vol = self.predict_vol( vol, training=training)
+    x_cnn = self.predict_cnn( images, training=training)
+    return x_vol + x_cnn
+
+  def predict_cnn( self, images, training=False):
+    x_1 = []
+    for i in range( len( self.inception1) -1 ):
+        for j in range( len( self.inception1[i]) ):
+            if j == 0:
+                x_1.append( self.inception1[i][j]( images, training=training) )
+            else:
+                x_1[i] = self.inception1[i][j]( x_1[i], training=training ) 
+    #concatenation and 1x1 convo
+    for layer in self.inception1[-1]:
+        x_1 = layer( x_1, training=training)
+    x = []
+    for i in range( len( self.inception2) -1 ):
+        for j in range( len( self.inception2[i]) ):
+            if j == 0:
+                x.append( self.inception2[i][j]( x_1, training=training) )
+            else:
+                x[i] = self.inception2[i][j]( x[i], training=training ) 
+    del x_1
+    #concatenation and 1x1 convo
+    for layer in self.inception2[-1]:
+        x = layer( x, training=training)
+    # regression of fatures
+    for layer in self.regressor:
+        x = layer(x, training=training)
+    return x
+
 
 
 class GenericCnn( Model):
