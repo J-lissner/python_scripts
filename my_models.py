@@ -267,51 +267,31 @@ class TranslationInvariant( VolBypass):
     self.inception1 = [ [], [], [], [], []]
     huge = self.inception1[0]
     huge.append( Conv2DPeriodic( filters=10, kernel_size=15, strides=stride, activation='relu') )
-    huge.append( Conv2DPeriodic( filters=10, kernel_size=11, strides=stride, activation='relu') )
     huge.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
-    huge.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
     large = self.inception1[1]
     large.append( Conv2DPeriodic( filters=10, kernel_size=11, strides=stride, activation='relu') )
-    large.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
-    large.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    large.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
     medium= self.inception1[2]
-    medium.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
     medium.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
-    medium.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
     small = self.inception1[3]
-    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
     small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
     layer_concat = self.inception1[-1]
     layer_concat.append( Concatenate())
     layer_concat.append( Conv2D( filters=30, kernel_size=1, strides=stride, activation='selu'))
     layer_concat.append( BatchNormalization() )
 
-    self.inception2 = [ [], [], [], [] ]
-    big = self.inception2[0]
-    big.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
-    big.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
-    medium = self.inception2[1]
-    medium.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
-    medium.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
-    small = self.inception2[2]
-    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
-    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
-    layer_concat = self.inception2[-1]
-    layer_concat.append( Concatenate())
-    layer_concat.append( Conv2D( filters=15, kernel_size=1, strides=stride, activation='selu'))
-    layer_concat.append( BatchNormalization() )
-    layer_concat.append( Flatten() )
+
+    self.cnn_wrap = []
+    self.cnn_wrap.append( Conv2DPeriodic( filters=30, kernel_size=3, strides=stride, activation='relu' )
+    self.cnn_wrap.append( BatchNormalization() )
+    self.cnn_wrap.append( GlobalAveragePooling2D() )
 
     self.regressor = []
-    self.regressor.append( Dense( 1000, activation='selu' )) 
-    self.regressor.append( BatchNormalization()) 
-    self.regressor.append( Dense( 500, activation='selu' )) 
-    self.regressor.append( BatchNormalization()) 
-    self.regressor.append( Dense( 200, activation='selu' )) 
-    self.regressor.append( BatchNormalization()) 
-    self.regressor.append( Dense( 100, activation='selu' )) 
-    self.regressor.append( BatchNormalization()) 
     self.regressor.append( Dense( 50, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 35, activation='selu' )) 
+    self.regressor.append( BatchNormalization()) 
+    self.regressor.append( Dense( 20, activation='selu' )) 
     self.regressor.append( BatchNormalization()) 
     self.regressor.append( Dense( self.n_output ) )
 
@@ -322,26 +302,18 @@ class TranslationInvariant( VolBypass):
     return x_vol + x_cnn
 
   def predict_cnn( self, images, training=False):
-    x_1 = []
+    x = []
     for i in range( len( self.inception1) -1 ):
         for j in range( len( self.inception1[i]) ):
             if j == 0:
-                x_1.append( self.inception1[i][j]( images, training=training) )
+                x.append( self.inception1[i][j]( images, training=training) )
             else:
-                x_1[i] = self.inception1[i][j]( x_1[i], training=training ) 
+                x[i] = self.inception1[i][j]( x[i], training=training ) 
     #concatenation and 1x1 convo
     for layer in self.inception1[-1]:
-        x_1 = layer( x_1, training=training)
-    x = []
-    for i in range( len( self.inception2) -1 ):
-        for j in range( len( self.inception2[i]) ):
-            if j == 0:
-                x.append( self.inception2[i][j]( x_1, training=training) )
-            else:
-                x[i] = self.inception2[i][j]( x[i], training=training ) 
-    del x_1
-    #concatenation and 1x1 convo
-    for layer in self.inception2[-1]:
+        x = layer( x, training=training)
+    #conv and pooling
+    for layer in self.cnn_wrap:
         x = layer( x, training=training)
     # regression of fatures
     for layer in self.regressor:
