@@ -282,7 +282,7 @@ class TranslationInvariant( VolBypass):
 
 
     self.cnn_wrap = []
-    self.cnn_wrap.append( Conv2DPeriodic( filters=30, kernel_size=3, strides=stride, activation='relu' )
+    self.cnn_wrap.append( Conv2DPeriodic( filters=30, kernel_size=3, strides=stride, activation='relu' ))
     self.cnn_wrap.append( BatchNormalization() )
     self.cnn_wrap.append( GlobalAveragePooling2D() )
 

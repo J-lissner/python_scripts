@@ -194,7 +194,6 @@ class ConvoCombo( VolBypass):
     super( ConvoCombo, self).__init__( n_output, *args, **kwargs)
     # above command should also build vol and build regressor
     self.build_extractor()
-    self.build_regressor( neurons=[ 500, 300, 100, 50] )
     #self.build_vol( )
     #self.build_regressor( )
 
