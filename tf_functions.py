@@ -32,7 +32,7 @@ def evaluation( x, y, model, loss_object, **model_kwargs):
 
 
 @tf.function
-def roll_images( images, part=0.5):
+def roll_images( images, part=0.5, shuffle=False):
     """
     Given periodic images of shape (n_samples, n_1, n_2, n_channels)
     randomly roll the <part> in x and y direction.
@@ -48,10 +48,12 @@ def roll_images( images, part=0.5):
     part:       float, default 0.5
                 what proportion of the randomly selected images should
                 be rolled
+    shuffle:    bool, default False
+                if the data should be shuffled during rolling
     Returns:
     --------
-    None:       rolls the images in place 
-                #TODO TO BE VALIDATED IF TENSORFLOW DOES NOT OVERWRITE PYTHON BEHAVIOUR 
+    images:     tensorflow.tensor
+                images with randomly selected <part> randomly rolled
     """
     n_images = images.shape[0]
     n_roll = int( n_images*part )
@@ -64,7 +66,10 @@ def roll_images( images, part=0.5):
         rolled_images.append( tf.roll( images[indices[i]], roll[i], axis=[0,1] )) 
     for i in range( n_roll, n_images):
         rolled_images.append( images[indices[i] ] )
-    return tf.stack( rolled_images)
+    images = tf.stack( rolled_images)
+    if shuffle is False:
+        images = tf.gather( images, tf.argsort( indices))
+    return images
 
 ## Generators cannot be tf.function s, it significantly slows down training....
 def batch_data( x, y, n_batches, shuffle=True):
