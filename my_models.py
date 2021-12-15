@@ -266,30 +266,30 @@ class TranslationInvariant( VolBypass):
     stride = 1  #for true translational invariance 
     self.inception1 = [ [], [], [], [], []]
     huge = self.inception1[0]
-    huge.append( Conv2DPeriodic( filters=10, kernel_size=15, strides=stride, activation='relu') )
-    huge.append( Conv2DPeriodic( filters=10, kernel_size=7, strides=stride, activation='relu') )
+    huge.append( Conv2DPeriodic( filters=5, kernel_size=15, strides=stride, activation='relu') )
+    huge.append( Conv2DPeriodic( filters=5, kernel_size=7, strides=stride, activation='relu') )
     large = self.inception1[1]
-    large.append( Conv2DPeriodic( filters=10, kernel_size=11, strides=stride, activation='relu') )
-    large.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    large.append( Conv2DPeriodic( filters=5, kernel_size=11, strides=stride, activation='relu') )
+    large.append( Conv2DPeriodic( filters=5, kernel_size=5, strides=stride, activation='relu') )
     medium= self.inception1[2]
-    medium.append( Conv2DPeriodic( filters=10, kernel_size=5, strides=stride, activation='relu') )
+    medium.append( Conv2DPeriodic( filters=5, kernel_size=5, strides=stride, activation='relu') )
     small = self.inception1[3]
-    small.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu') )
+    small.append( Conv2DPeriodic( filters=5, kernel_size=3, strides=stride, activation='relu') )
     layer_concat = self.inception1[-1]
     layer_concat.append( Concatenate())
-    layer_concat.append( Conv2D( filters=30, kernel_size=1, strides=stride, activation='selu'))
+    layer_concat.append( Conv2D( filters=10, kernel_size=1, strides=stride, activation='selu'))
     layer_concat.append( BatchNormalization() )
 
 
     self.cnn_wrap = []
-    self.cnn_wrap.append( Conv2DPeriodic( filters=30, kernel_size=3, strides=stride, activation='relu' ))
+    self.cnn_wrap.append( Conv2DPeriodic( filters=10, kernel_size=3, strides=stride, activation='relu' ))
     self.cnn_wrap.append( BatchNormalization() )
     self.cnn_wrap.append( GlobalAveragePooling2D() )
 
     self.regressor = []
-    self.regressor.append( Dense( 50, activation='selu' )) 
+    self.regressor.append( Dense( 80, activation='selu' )) 
     self.regressor.append( BatchNormalization()) 
-    self.regressor.append( Dense( 35, activation='selu' )) 
+    self.regressor.append( Dense( 50, activation='selu' )) 
     self.regressor.append( BatchNormalization()) 
     self.regressor.append( Dense( 20, activation='selu' )) 
     self.regressor.append( BatchNormalization()) 
@@ -322,18 +322,24 @@ class TranslationInvariant( VolBypass):
 
 
 
-class GenericCnn( Model):
-  def __init__( self, n_output, dense=[256,128,64,32], activation='selu', batch_norm=True, pre_pool=0, **conv_architecture ):
+class GenericCnn( VolBypass):
+  def __init__( self, n_output ):
     """
     Get a generic deep conv net
     Parameters:
     -----------
     n_output:       int
                     size of output
+    """
+    super().__init__( n_output)
+    self.build_model()
+
+  def build_model( self,  dense=[100,70,50,30], activation='selu', batch_norm=True, pre_pool=3, **conv_architecture ):
+    """
     dense:          list like of ints, default [256,128,64,32]
                     dense layer after pooling
     activation:     str or list like of str, default 'selu'
-                    activation function for dense layer 
+                    activation function for dense layer
     batch_norm:     bool, default True
                     whether to apply batch normalization after dense and pooling
     pre_pool:       int, default 0
@@ -350,12 +356,10 @@ class GenericCnn( Model):
                     can be specified with ints
     Returns:
     --------
-    None:           builds the model in self.architecture
-    """
-    #then also try if a parallel model with downsampled inputs is good
-    super().__init__()
-    model = self.architecture #gotten from super
-    ## input preprocessing
+    None:           allocates architecture inside
+    """ 
+    self.conv = []
+    model = self.conv
     kernels = conv_architecture.pop( 'kernels', [11,7,5,3,3])
     strides = conv_architecture.pop( 'strides', [4,3,3,2,2])
     filters = conv_architecture.pop( 'filters', [32,32,64,64,96])
@@ -377,13 +381,30 @@ class GenericCnn( Model):
         model.append( Conv2DPeriodic( filters[i], kernels[i], strides[i], activation=activation[i] ) )
         if pooling[i]:
             model.append( MaxPool2DPeriodic( pooling[i] ) )
-    model.append( Flatten() )
     model.append( BatchNormalization())
+    model.append( Flatten() )
+    ## build regressor
+    self.regressor = []
+    model = self.regressor
     for i in range( n_dense):
         model.append( Dense( dense[i], activation=activation[i+n_conv]) )
         if batch_norm:
             model.append(  BatchNormalization() )
-    model.append( Dense( n_output) )
+    model.append( Dense( self.n_output) )
+
+  def call( self, images, vol=None, training=False):
+      """ x is image data, x_vol = volume fraction """
+      x_vol = self.predict_vol( vol, training=training)
+      x = self.predict_cnn( images)
+      return  x + x_vol
+
+  def predict_cnn( self, x, training=False):
+      for layer in self.conv:
+          x = layer( x, training=training)
+      for layer in self.regressor:
+          x = layer(x, training=training)
+      return x
+
 
 
 

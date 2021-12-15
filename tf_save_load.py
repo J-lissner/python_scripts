@@ -181,21 +181,47 @@ class Loader():
     """
     Documentation very similar to the saver object, is omitted for now
     """
-    def __init__(self, savepath):
+    def __init__(self, load_path, **load):
         """ 
         Initialize the Loader pointing to the direction where the model is stored.
         Note that the Saver has to be correctly executed for the loader to work.
-        This must include 'Saver.code()'. All other saver functions are conditional
+        This must include 'Saver.code()'. All other saver functions are conditional.
+        The return values should be catched with as many variables as 'True' in
+        **load, defaults to two: model and scaling
         Parameters:
         -----------
-        savepath:   string
+        load_path:  string
                     path to the folder where the Saver() dumped the objects
+        **load:     kwargs with default values on which objects directly to return
+        load_model:     bool, default True
+                        directly return the model on __init__
+        load_scaling:   bool, default True
+                        directly return the scaling
+        load_locals:    bool, default False
+                        directly return the local variables from training
+        load_tracked:   bool, default False
+                        directly return the tracked_variables from training
         Returns:
         --------
-        Loader:     instance of Loader object 
-                    Loader object to assemble the previously stored model
+        tuple of python objects
+                        Returns as many python objects as requested in **load
+                        always in this order: ANN, scaling, locals, tracked_variables
         """
-        self.path = savepath
+        self.load_path = load_path
+        load_model = load.pop( 'load_model', True) 
+        load_scaling = load.pop( 'load_scaling', True) 
+        load_locals = load.pop( 'load_locals', True) 
+        load_tracked = load.pop( 'load_tracked', True) 
+        data = []
+        if load_model:
+            data.append( self.model() )
+        if load_scaling:
+            data.append( self.scaling() )
+        if load_locals:
+            data.append( self.locals() )
+        if load_tracked:
+            data.append( self.tracked_variables() )
+        return data
 
 
     def model(self):
@@ -210,27 +236,46 @@ class Loader():
         Model:      restored instance of the user defined model
                     restores the saved weights as well as the defined architecture
         """
-        with open( '{}/model_name.pkl'.format( self.path), 'rb') as string_file:
+        with open( '{}/model_name.pkl'.format( self.load_path), 'rb') as string_file:
             model_name = pickle.load( string_file)
-        model_code = '{}/custom_model'.format( self.path).replace('//','.') 
+        model_code = '{}/custom_model'.format( self.load_path).replace('//','.') 
         model_code = model_code.replace('/','.') 
         model_code = getattr( import_module( model_code), model_name) 
 
         try:
-            with open( '{}/init_args.pkl'.format( self.path), 'rb') as pklfile:
+            with open( '{}/init_args.pkl'.format( self.load_path), 'rb') as pklfile:
                 args = pickle.load( pklfile)
         except: 
             args = []
             print( 'no "init_args" found in the saved folder, contuniong without loading any') 
         try:
-            with open( '{}/init_kwargs.pkl'.format( self.path), 'rb') as pklfile:
+            with open( '{}/init_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
                 kwargs = pickle.load( pklfile)
         except: 
             kwargs = {}
             print( 'no "init_kwargs" found in the saved folder, contuniong without loading any') 
         model = model_code( *args, **kwargs)
-        model.load_weights( '{}/weights/'.format( self.path) )
+        model.load_weights( '{}/weights/'.format( self.load_path) )
         return model
+
+
+    def scaling(self ):
+        """
+        Load the previously stored scalings for the data.
+        The scalings should be computed with the module 'data_processing' 
+        (the module is in the same git repository)
+        Parameters:
+        -----------
+        None:   The Loader refers to the Saver relation
+        Returns:
+        --------
+        scalings:   Dict
+                    Input and output scalings stored under the
+                    'input' and 'output' keys 
+        """
+        with open( '{}/scalings.pkl'.format( self.load_path), 'rb') as pklfile:
+            scalings = pickle.load( pklfile)
+        return scalings
 
 
     def locals(self, tutorial=True):
@@ -253,7 +298,7 @@ class Loader():
         local_variables:    dict
                             dictionary containing the 'variable'-'variable_value' pair
         """ 
-        with open( '{}/local_kwargs.pkl'.format( self.path), 'rb') as pklfile:
+        with open( '{}/local_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
             local_variables = pickle.load( pklfile)
         if tutorial:
             print( """###########################################################################
@@ -269,26 +314,6 @@ class Loader():
         print()
         return local_variables
 
-
-    def scaling(self ):
-        """
-        Load the previously stored scalings for the data.
-        The scalings should be computed with the module 'data_processing' 
-        (the module is in the same git repository)
-        Parameters:
-        -----------
-        None:   The Loader refers to the Saver relation
-        Returns:
-        --------
-        scalings:   Dict
-                    Input and output scalings stored under the
-                    'input' and 'output' keys 
-        """
-        with open( '{}/scalings.pkl'.format( self.path), 'rb') as pklfile:
-            scalings = pickle.load( pklfile)
-        return scalings
-
-
     def tracked_variables(self ):
         """
         Load additionally tracked variables after training
@@ -300,13 +325,13 @@ class Loader():
         tracked:    Dict
                     Dictionary containing all the tracked variables
         """
-        with open( '{}/tracked_variables.pkl'.format( self.path), 'rb' ) as pklfile:
+        with open( '{}/tracked_variables.pkl'.format( self.load_path), 'rb' ) as pklfile:
             track = pickle.load( pklfile)
         return track
 
 
 
-class Retraining():
+class Retraining(Loader):
     """
     Load a previously trained model and then save it into the specified path
     The save path can be the same as the load path, then the previous model is overwritten
@@ -321,67 +346,27 @@ class Retraining():
 
 
     def load_model(self ):
-        with open( '{}/model_name.pkl'.format( self.load_path), 'rb') as string_file:
-            model_name = pickle.load( string_file)
-        model_code = '{}/custom_model'.format( self.load_path).replace('/','.') 
-        model_code = getattr( import_module( model_code), model_name)
-
-        try:
-            with open( '{}/init_args.pkl'.format( self.load_path), 'rb') as pklfile:
-                args = pickle.load( pklfile)
-        except: 
-            args = []
-            print( 'no "init_args" found in the saved folder, contuniong without loading any')
-
-        try:
-            with open( '{}/init_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
-                kwargs = pickle.load( pklfile)
-        except: 
-            kwargs = {}
-            print( 'no "init_kwargs" found in the saved folder, contuniong without loading any')
-
-        model = model_code( *args, **kwargs)
-        model.load_weights( '{}/weights/'.format( self.load_path) )
-        self.model_inputs = [ args, kwargs]
-        return model
+        return self.model() #inherited from loader class
 
 
     def load_scaling(self ):
-        with open( '{}/scalings.pkl'.format( self.load_path), 'rb') as pklfile:
-            scalings = pickle.load( pklfile)
-        return scalings
+        return self.scaling()
 
     def load_locals(self, tutorial=True):
-        with open( '{}/local_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
-            local_variables = pickle.load( pklfile)
-        if tutorial:
-            print( """###########################################################################
-               After the variables have been loaded they need to be assigned by
-               for key, value in Loader.locals( tutorial=False).items(): 
-                   exec(key + '=value')\n
-               This will automatically assign all the previously saved variables\n
-               """)
-            print( '###########################################################################' )
-        print()
-        print( 'additional variables when loading the locals:', list( local_variables.keys() ) )
-        print( 'NOTE: existing variables will be overwritten!')
-        print()
-        return local_variables
+        return self.locals() 
 
 
     def save_model( self, model):
         os.system( 'mkdir -p {}'.format( self.save_path) ) #simply does nothing if it already exists
         model.save_weights('{}/weights/'.format( self.save_path), save_format='tf')
         if self.save_path == self.load_path:
-            return
-
+            return 
         ## else copy everything to the new folder
         os.system( 'touch {}/__init__.py'.format( self.save_path) )
         os.system( 'cp {}/custom_model.py {}/custom_model.py'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/model_name.pkl  {}/model_name.pkl'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/init_args.pkl   {}/init_args.pkl'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/init_kwargs.pkl {}/init_kwargs.pkl'.format( self.load_path, self.save_path) ) 
-
         ## copy previously stored locals and scalings
         self.save_locals()
         self.save_scaling()
@@ -407,4 +392,43 @@ class Retraining():
             scalings = { 'input':input_scaling, 'output':output_scaling}
             with open( '{}/scalings.pkl'.format( self.save_path), 'wb') as pklfile:
                 pickle.dump( scalings, pklfile)
+
+
+class PartialArchitecture( Loader):
+    """
+    Load things from a model which has partially the same architecture 
+    than the one previous and write the weights in there. In the main 
+    code the freezing of the loaded stuff should happen if desired etc.
+    This is not a standalone class, in order to work as intended it 
+    requires additional code in the main file. 
+    """
+    def __init__( self, load_path, new_class, **model_kwargs):
+        """
+        Load in parameters of a previously trained ann into a new ANN 
+        (which preferably inherits from the class) and return the ANN
+        The new model does not take any args here, but additional kwargs
+        (overwritten by the loaded kwargs if names are overloaded)
+        Parameters:
+        -----------
+        load_path:  str
+                    path to dumped model files of the "Saver" 
+        new_class:  python class
+                    uninvoked python class of the new model
+        """
+        self.load_path = load_path
+        try:
+            with open( '{}/init_args.pkl'.format( self.load_path), 'rb') as pklfile:
+                args = pickle.load( pklfile)
+        except: 
+            args = []
+            print( 'no "init_args" found in the saved folder, contuniong without loading any') 
+        try:
+            with open( '{}/init_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
+                kwargs = pickle.load( pklfile)
+        except: 
+            kwargs = {}
+            print( 'no "init_kwargs" found in the saved folder, contuniong without loading any') 
+        model = new_class( *args, **kwargs)
+        model.load_weights( '{}/weights/'.format( self.load_path) )
+        return model
 

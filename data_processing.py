@@ -414,6 +414,11 @@ def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=
                     corresponding target values to image data
     """
     #input preprocessing and variable allocation
+    if augmentation is None:
+      if x_extra is None:
+        return images, y
+      else:
+        return images, y, x_extra
     multi_roll = max( (multi_roll, 1) )
     n_samples = images.shape[0]
     n_augmented = n_samples * augmentation

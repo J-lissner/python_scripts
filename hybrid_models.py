@@ -113,7 +113,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     """
     ## inputs and preprocessing
     learning_rate =  trainers.pop( 'learning_rate', 0.05 )
-    optimizer         = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
+    optimizer    = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
     loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
     if trainers:
         raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
@@ -124,8 +124,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     #trainable_variables = self.vol_part.trainable_variables
     valid_loss = [1]
     best_epoch = 0
-    for layer in self.vol_part:
-        layer.trainable=True
+    self.freeze_vol( False )
     ## training
     for i in range( n_epochs):
         with tf.GradientTape() as tape:
@@ -140,9 +139,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     ## restore the best model and freeze the layers
     if not (x_valid is None and y_valid is None):
         checkpoint.restore( checkpoint_manager.latest_checkpoint)
-    if freeze:
-        for layer in self.vol_part:
-            layer.trainable=False
+    self.freeze_vol( freeze )
     return valid_loss
  
 
