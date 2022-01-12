@@ -181,7 +181,7 @@ class Loader():
     """
     Documentation very similar to the saver object, is omitted for now
     """
-    def __init__(self, load_path, direct_return=True, **load):
+    def __init__(self, load_path, **load):
         """ 
         Initialize the Loader pointing to the direction where the model is stored.
         Note that the Saver has to be correctly executed for the loader to work.
@@ -192,9 +192,6 @@ class Loader():
         -----------
         load_path:      string
                         path to the folder where the Saver() dumped the objects
-        direct_return:  bool, default True
-                        whether to directly return the model etc. without returning 
-                        the object. Return options specified below
         **load:     kwargs with default values on which objects directly to return
         load_model:     bool, default True
                         directly return the model on __init__
@@ -210,19 +207,12 @@ class Loader():
                         Returns as many python objects as requested in **load
                         always in this order: ANN, scaling, locals, tracked_variables
         """
-        print( 'now i am in init' )
         self.load_path = load_path
-        self.direct_return = direct_return
-        self.set_return( self, **load )
+        self.set_return( **load )
 
-    def __new__( self, *args, **kwargs):
-        """ Use the loader to directly return the model etc when specified """
-        print( 'now i am in new' )
-        self.__init__( self, *args, **kwargs)
-        if not self.direct_return:
-            return self
-        else:
-            return self.data_return( self)
+    def __call__( self):
+        """ Use the loader to directly return everything that has been specified """
+        return self.data_return()
 
     def set_return( self, **load):
         """
@@ -231,8 +221,8 @@ class Loader():
         """
         load_model = load.pop( 'load_model', True) 
         load_scaling = load.pop( 'load_scaling', True) 
-        load_locals = load.pop( 'load_locals', True) 
-        load_tracked = load.pop( 'load_tracked', True) 
+        load_locals = load.pop( 'load_locals', False) 
+        load_tracked = load.pop( 'load_tracked', False) 
         self.model_switch = load_model
         self.scaling_switch = load_scaling
         self.locals_switch = load_locals
@@ -242,13 +232,13 @@ class Loader():
     def data_return( self):
         data = []
         if self.model_switch:
-            data.append( self.model( self) )
+            data.append( self.model() )
         if self.scaling_switch:
-            data.append( self.scaling(self) )
+            data.append( self.scaling() )
         if self.locals_switch:
-            data.append( self.locals(self) )
+            data.append( self.locals() )
         if self.tracked_switch:
-            data.append( self.tracked_variables(self) )
+            data.append( self.tracked_variables() )
         return data
 
 
@@ -310,6 +300,7 @@ class Loader():
 
     def locals(self, tutorial=True):
         """
+        #TODO i think there might be a bug here on the pickle.load
         Restore the locally defined variables in the previous training.
         This function requires additional code in the main file to work (see below)
         If the code is executed, the local variables are usable 
