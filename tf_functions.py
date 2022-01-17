@@ -66,7 +66,9 @@ def roll_images( images, part=0.5, shuffle=False):
         rolled_images.append( tf.roll( images[indices[i]], roll[i], axis=[0,1] )) 
     for i in range( n_roll, n_images):
         rolled_images.append( images[indices[i] ] )
+    del images
     images = tf.stack( rolled_images)
+    del rolled_images
     if shuffle is False:
         images = tf.gather( images, tf.argsort( indices))
     return images

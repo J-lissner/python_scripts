@@ -8,8 +8,9 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalA
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
+import tf_functions as tfun
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
-from other_functions import Cycler
+from other_functions import Cycler, tic, toc
 
 
 class VolBypass( Model): #previously called 'SeparateVol'
@@ -36,17 +37,17 @@ class VolBypass( Model): #previously called 'SeparateVol'
     self.n_vol = n_vol
     self.vol_slice = slice( 0, n_vol)
     self.feature_slice = slice( n_vol, None)
-    self.time = lambda: datetime.now().strftime("%Y-%m-%d_%H:%M:%S")  #used in pretrain functions
     self.build_vol( )
     self.build_regressor( )
 
 
+  ##### Building of the architecture subblocks ######
   def build_vol(self, n_neurons=5, activation='selu'):
     """ 
     build the architecture of the upper bypass layer which connects the
     first input neuron directly to the output layer. it has one hidden
     layer inbetween to allow for some nonlinearity.
-    parameters:
+    Parameters:
     -----------
     n_ouptut:   int
                 size of the output layer
@@ -64,7 +65,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
   def build_regressor(self, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
     """
     build the architecture of the remaining Dense model.
-    parameters:
+    Parameters:
     -----------
     n_ouptut:   int
                 size of the output layer
@@ -85,70 +86,121 @@ class VolBypass( Model): #previously called 'SeparateVol'
             self.regressor.append( BatchNormalization() )
     self.regressor.append( Dense( self.n_output) )
 
-                
-  def pretrain_vol( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_epochs=75, **trainers):
+  ##### pretraining and layer freezing #####
+  def pretrain_section( self, x_train, y_train, x_valid=None, y_valid=None, n_epochs=None, n_batches=40, predictor=None, roll_x0=False ):
     """
     NOTE: before calling this function the model has to be called that
     it is precompiled. Otherwise no training happens.
     Validation data is required to recover the best model. Otherwise it 
     just trains n_epochs and takes the last model.
     pretrain only the 'upper part' which predicts the volume fraction'
-    parameters:
+    It trains the part until convergence. Some meaningful default parameters
+    are chosen which can't be overwritten in function call.
+    All the freezing of other layers has to be done outside this function
+    It assumes that x_train[1] is images.
+    Parameters:
     -----------
-    x/y_train:  torch.tensor or numpy array
-                training_data
-    x/y_valid:  torch.tensor or numpy array, default None
-                validation data #todo
-    freeze:     bool, default True
-                whether or not to freeze the weights after training
-    n_epochs:   int, default 50
-                how many epochs to train the model
-    **trainers: default kwargs for the training parameters 
-    learning_rate:  float, default 0.05
-                    learning rate during optimization
-    optimizer:      tf.keras.optimizers object, default ...optimizers.Adam
-                    optimizer for learning
-    loss:           tf.keras.losses object, default ..losses.MeanSquaredError()
-                    loss to optimize with 
+    x/y_train:  list of torch.tensor or numpy array
+                training_data given in lists such that predictor( *x_train) works
+    x/y_valid:  list of torch.tensor or numpy array, default None
+                validation data 
+    n_epochs:   int, default None
+                how many epochs to train the model, trains to convergence per default
+    n_batches:  int, default 25
+                how many batches to batch the data into
+    predictor:  method of self, default self.call
+                method to predict specific parts of the model
+    roll_x0:    bool, default False
+                roll the input data, only makes sense if x_train[i] is images
+    Returns:
+    --------
+    valid_loss: numpy 1d-array
+                loss of valid data if given. gives the loss of partial ann
     """
-    ## inputs and preprocessing
-    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
-    optimizer    = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
-    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
-    if trainers:
-        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
-    trainable_variables = self.trainable_variables  #didn't quite work
+    ## input preprocessing
+    if predictor is None:
+        predictor = self.call
+    if n_epochs is None:
+        n_epochs = 20000
+        stopping_delay = 50
+    else:
+        stopping_delay = n_epochs
+    if len( x_train) == 1:
+        x_train.append( None)
+    if roll_x0:
+        roll_idx = 0
+    else:
+        roll_idx = -1
+    x_train = list( x_train)
+
+    ## allocation of hardwired default parameters
+    roll_interval = 7 
+    learning_rate =  0.05 
+    optimizer = tf.keras.optimizers.Adam( learning_rate=learning_rate) 
+    loss =  tf.keras.losses.MeanSquaredError() 
+    trainable_variables = self.trainable_variables 
     checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
-    #trainable_variables = [ layer.trainable_variables for layer in self.vol_part] #or trainable_weights 
-    #trainable_variables = self.vol_part.trainable_variables
-    valid_loss = [1]
+    ckpt_folder = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
+    checkpoint_manager = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
+    valid_loss = []
     best_epoch = 0
-    self.freeze_vol( False )
-    ## training
+    overfit = 1
+    debug_interval = 15
+    ## training until convergence or for n_epochs
+    tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True )
+    print( '### starting training for {} ###'.format( predictor.__name__ ) )
     for i in range( n_epochs):
-        with tf.GradientTape() as tape:
-            y_pred = self.predict_vol( x_train, training=True )
-            train_loss = loss( y_train, y_pred )
-        gradients = tape.gradient( train_loss, trainable_variables)
-        optimizer.apply_gradients( zip(gradients, trainable_variables) )
-        if not (x_valid is None and y_valid is None):
-            valid_loss.append( loss( y_valid, self.predict_vol( x_valid)).numpy() ) 
-            if valid_loss[-1] < valid_loss[best_epoch]:
-                checkpoint_manager.save() 
-    ## restore the best model and freeze the layers
+      if (x_train[-1] is not None or roll_x0) and ((i+1) % roll_interval == 0 ):
+          x_train[roll_idx] = get.roll_images( x_train[roll_idx]  )
+      batched_data = get.batch_data( x_train[0], y_train, n_batches, x_extra=x_train[-1] )
+      for batch in batched_data:
+         y_batch = batch.pop(1)
+         with tf.GradientTape() as tape:
+            y_pred = predictor( *batch, training=True)
+            train_loss = loss( y_batch, y_pred )
+         gradients = tape.gradient( train_loss, trainable_variables)
+         optimizer.apply_gradients( zip(gradients, trainable_variables) )
+      if not (x_valid is None and y_valid is None):
+          y_pred = predictor( *x_valid )
+          valid_loss.append( loss( y_valid, y_pred).numpy() ) 
+          if valid_loss[-1] < valid_loss[best_epoch]:
+              checkpoint_manager.save() 
+              best_epoch = i
+              overfit = 0
+          overfit += 1
+      if overfit == stopping_delay:
+          break
+      if (i+1) % debug_interval == 0:
+          toc( '{}: {} additional epochs'.format( predictor.__name__, debug_interval) )
+          print( 'current partial val loss:  {:.6f}  vs best  {:.6f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
+          tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True )
+
+    ## restore the best model
     if not (x_valid is None and y_valid is None):
         checkpoint.restore( checkpoint_manager.latest_checkpoint)
-    self.freeze_vol( freeze )
     return valid_loss
- 
 
+
+  def freeze_all( self, freeze=True):
+      """ freeze or unfreeze the whole model """
+      freeze_methods = [method for method in dir( self) if 'freeze' in method.lower()]
+      freeze_methods.pop( freeze_methods.index( 'freeze_all') )
+      for method in freeze_methods:
+          method = getattr( self, method)
+          method( freeze)
+
+                
   def freeze_vol( self, freeze=True):
     """ freeze the layers of the volume fraction linking to the output layer"""
     for layer in self.vol_part:
         layer.trainable = not freeze
+  
+  def freeze_regressor( self, freeze=True): 
+    for layer in self.regressor:
+        layer.trainable = not freeze
 
 
+  ##### calls and shadows of calls ######
   def call(self, x, training=False, *args, **kwargs):
     """ call function given a feature vector which has the volume
     fraction in the first dimension, and the remaining features in
@@ -267,6 +319,14 @@ class ConvoCombo( VolBypass):
     small_pool.append( MaxPool2DPeriodic( pool_size=3) )
     small_pool.append( Flatten())
 
+  
+  def freeze_inception( self, freeze=True):
+      """ freeze the entirety of all inception modules """
+      for module in [self.inception_1, self.poolers]:
+          for block in module:
+              for layer in block:
+                  layer.trainable = not freeze
+
 
   def extract_features( self, images, training=False):
     x = []
@@ -291,6 +351,12 @@ class ConvoCombo( VolBypass):
     x_pool = concatenate( x_pool)
     return concatenate( [x, x_pool])
 
+  def predict_inception( self, images, training=False):
+    x = self.extract_features( images, training)
+    for layer in self.regressor:
+        x = layer( x, training=training) 
+    return x
+
 
   def call(self, x, vol=None, training=False):
     """
@@ -301,10 +367,7 @@ class ConvoCombo( VolBypass):
     if vol is None: 
         vol = tf.reshape( tf.reduce_mean( x, axis=[1,2,3] ), (-1, 1) )
     x_vol = self.predict_vol( vol, training )
-        
-    x = self.extract_features( x, training)
-    for layer in self.regressor:
-        x = layer( x, training=training) 
+    x = self.predict_inception( x, training) 
     return x + x_vol
 
 
@@ -361,114 +424,11 @@ class FullCombination( ConvoCombo ):
     for layer in self.feature_regressor:
         layer.trainable = not freeze
 
-
-  def freeze_full_cnn( self, freeze=True):
+  def freeze_connections( self, freeze=True):
     """freeze the full part of the pure CNN part, i.e. feature
     extraction and prediction on the CNN part """
-    for block in self.inception_1:
-        for layer in block:
-            layer.trainable = not freeze
-
-
-  def pretrain_features( self, x_train, y_train, x_valid=None, y_valid=None, freeze=True, n_batches=6, n_epochs=1000, **trainers):
-    """
-    For the documentation see 'self.pretrain_vol', it is literally the 
-    same only that it trains here a different part of the model
-    Additional Parameters:
-    ---------- -----------
-    n_batches:      int, default 6
-                    how many batches to do (required for batch normalization)
-    """
-    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
-    optimizer = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
-    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
-    if trainers:
-        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
-    trainable_variables = self.trainable_variables 
-    checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
-    valid_loss = [1]
-    best_epoch = 0
-    for layer in self.feature_regressor:
-        layer.trainable=True
-    ## training
-    for i in range( n_epochs):
-      batched_data = get.batch_data( x_train, y_train, n_batches )
-      for x_batch, y_batch in batched_data: #have to do batching for batch normalization
-         with tf.GradientTape() as tape:
-            y_vol = self.predict_vol( x_batch, training=False )
-            y_feature = self.predict_features( x_batch, training=True)
-            train_loss = loss( y_batch, y_vol+y_feature )
-         gradients = tape.gradient( train_loss, trainable_variables)
-         optimizer.apply_gradients( zip(gradients, trainable_variables) )
-      if not (x_valid is None and y_valid is None):
-          y_pred = self.predict_vol( x_valid, training=False)
-          y_pred += self.predict_features( x_valid, training=False)
-          valid_loss.append( loss( y_valid, y_pred).numpy() ) 
-          if valid_loss[-1] < valid_loss[best_epoch]:
-              checkpoint_manager.save() 
-    ## restore the best model and freeze the layers
-    if not (x_valid is None and y_valid is None):
-        checkpoint.restore( checkpoint_manager.latest_checkpoint)
-    if freeze:
-        self.freeze_feature_predictor()
-    return valid_loss
-
-
-  def pretrain_cnn( self, x_train, img_train, y_train, x_valid=None, img_valid=None, y_valid=None, n_batches=8, n_epochs=150, **trainers):
-    """
-    For the documentation see 'self.pretrain_vol', it is literally the 
-    same only that it trains here a different part of the model
-    This function will unfreeze the 'upper dense part' unconditionally!
-    Additional Parameters:
-    ---------- -----------
-    img_train:      numpy nd-array
-                    image data of shape n_samples x res... x n_channels
-    img_valid:      numpy nd-array, default None
-                    additional optional validation image data 
-    n_batches:      int, default 8
-                    how many batches to do (required for batch normalization)
-    freeze:         was removed, existed in the upper function
-    """
-    learning_rate =  trainers.pop( 'learning_rate', 0.05 )
-    optimizer = trainers.pop( 'optimizer', tf.keras.optimizers.Adam( learning_rate=learning_rate) )
-    loss =  trainers.pop( 'loss',  tf.keras.losses.MeanSquaredError() )
-    if trainers:
-        raise Exception( 'Found these illegal keys in model.pretrain_vol **kwargs: {}'.format( trainers.keys() ) )
-    trainable_variables = self.trainable_variables 
-    checkpoint = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    checkpoint_manager = tf.train.CheckpointManager( checkpoint, '/tmp/ckpt_{}'.format(self.time()), max_to_keep=1)
-    valid_loss = [1]
-    best_epoch = 0
-    self.freeze_vol()
-    self.freeze_feature_predictor()
-    ## training
-    for i in range( n_epochs):
-      batched_data = get.batch_data( x_train, y_train, n_batches, x_extra=img_train )
-      for x_batch, y_batch, img_batch in batched_data:
-         y_vol = self.predict_vol( x_batch, training=False )
-         y_feature = self.predict_features( x_batch, training=True)
-         with tf.GradientTape() as tape:
-            y_cnn = self.extract_features( img_batch, training=True)
-            for layer in self.regressor:
-                y_cnn = layer( y_cnn, training=True)
-            train_loss = loss( y_batch, y_cnn + y_vol + y_feature )
-         gradients = tape.gradient( train_loss, trainable_variables)
-         optimizer.apply_gradients( zip(gradients, trainable_variables) )
-      if not (x_valid is None and y_valid is None):
-          y_pred = self.predict_vol( x_valid, training=False)
-          y_pred += self.predict_features( x_valid, training=False)
-          y_cnn = self.extract_features( img_valid, training=True)
-          for layer in self.regressor:
-              y_cnn = layer( y_cnn, training=True)
-          valid_loss.append( loss( y_valid, y_cnn + y_pred).numpy() ) 
-          if valid_loss[-1] < valid_loss[best_epoch]:
-              checkpoint_manager.save() 
-    ## restore the best model and freeze the layers
-    if not (x_valid is None and y_valid is None):
-        checkpoint.restore( checkpoint_manager.latest_checkpoint)
-    self.freeze_feature_predictor( False)
-    return valid_loss
+    for layer in self.connector:
+        layer.trainable = not freeze
 
 
   #def extract_features( inherited)
@@ -479,6 +439,14 @@ class FullCombination( ConvoCombo ):
     for layer in self.feature_regressor:
         x = layer( x, training=training)
     return x
+  
+  def predict_intermediate( self, features, images, training=False):
+    x_cnn = self.extract_features( images, training=training )
+    #prediction of connection between cnn and manual features
+    x_combined = concatenate( [features, x_cnn])
+    for layer in self.connector:
+        x_combined = layer( x_combined, training=training )
+    return x_combined
 
 
   def call( self, features, images, training=False):
@@ -486,13 +454,13 @@ class FullCombination( ConvoCombo ):
     x_vol = self.predict_vol( features, training=training)
     x_features = self.predict_features( features, training=training)
     # predict cnn
-    cnn_features = self.extract_features( images, training=training )
-    x_cnn = cnn_features
-    for layer in self.regressor:
-        x_cnn = layer( x_cnn, training=training) 
+    x_cnn = self.extract_features( images, training=training )
     #prediction of connection between cnn and manual features
-    x_combined = concatenate( [features, cnn_features])
+    x_combined = concatenate( [features, x_cnn])
     for layer in self.connector:
         x_combined = layer( x_combined, training=training )
+    # prediction of the regressor of the cnn features
+    for layer in self.regressor:
+        x_cnn = layer( x_cnn, training=training) 
     return x_vol + x_features + x_cnn + x_combined
         

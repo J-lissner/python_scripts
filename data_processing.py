@@ -1,6 +1,10 @@
 import numpy as np
 import h5py
 from math import ceil, floor
+try:
+    from tensorflow import gather
+except:
+    gather = lambda x, permutation: np.take( x, permutation, axis=0 )
 
 ##################### GENERAL DATA TRANSFORMATION FOR ARBITRARY DATA ####################
 def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, slave_outputs=None):
@@ -316,7 +320,7 @@ class CrossValidation():
 
 
 
-def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None):
+def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None, numpy=True):
     """
     Generator/Factory function, yields 'n_batches' batches when called as
     a 'for loop' argument.  The last batch is the largest if the number of
@@ -337,11 +341,12 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     stochastic:     float, default 0.5
                     if the data should be stochastically picked, has to be <=1
                     only available if <shuffle> is True
-    x_extra:        numpy array
+    x_extra:        numpy array, default None
                     additional input data, asserts that len(x) == len( x_extra)
-    y_extra:        numpy array
+    y_extra:        numpy array, default None
                     additional output data
-                    
+    numpy:          bool, default True
+                    if all arrays are numpy arrays and not tf.tensors 
     Returns:
     -------
     data_batches    list
@@ -350,12 +355,20 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     n_samples = y.shape[0]
     if shuffle:
         permutation = np.random.permutation( n_samples )
-        x = x[ permutation]
-        y = y[ permutation]
-        if x_extra is not None:
-            x_extra = x_extra[ permutation]
-        if y_extra is not None:
-            y_extra = y_extra[ permutation]
+        if numpy is True:
+            x = x[ permutation]
+            y = y[ permutation]
+            if x_extra is not None:
+                x_extra =  x_extra[ permutation]
+            if y_extra is not None:
+                y_extra = y_extra[ permutation]
+        else:
+            x = gather( x, permutation)
+            y = gather( y, permutation)
+            if x_extra is not None:
+                x_extra = gather( x_extra, permutation)
+            if y_extra is not None:
+                y_extra = gather( y_extra, permutation)
     else:
         stochastic = 0
     batchsize = int( n_samples // n_batches * (1-stochastic) )
@@ -532,4 +545,42 @@ def compute_error( true_value, predictions, scaling=None, convertScale=False, me
     if metric=='mse':
         error = np.square(np.subtract(true_value, predictions)).mean() 
     return error
+
+def roll_images( images, part=0.5, shuffle=False):
+    """
+    ## Note that this function is executed on the CPU with numpy. In 
+    tf_functions there exists an identical function which is gpu compatible##
+    Given periodic images of shape (n_samples, n_1, n_2, n_channels)
+    randomly roll the <part> in x and y direction.
+    Intended use: data augmentation for periodic image data. Use this 
+    function while training to have virtually infinite training samples
+    (though the feature span of the training samples does not increase
+    due to this procedure)
+    Parameters:
+    -----------
+    images:     numpy nd-array
+                image data of shape (n_samples, n_1, n_2, n_channels)
+    part:       float, default 0.5
+                what proportion of the randomly selected images should
+                be rolled
+    shuffle:    bool, default False
+                if the data should be shuffled during rolling
+    Returns:
+    --------
+    images:     tensorflow.tensor
+                images with randomly selected <part> randomly rolled
+    """
+    n_images = images.shape[0]
+    n_roll = int( n_images*part )
+    img_dim = images.shape[1:3]
+    max_roll = min( img_dim)
+    indices = np.random.permutation( n_images )
+    roll = np.random.randint( 0, max_roll, size=(n_roll, len(img_dim) ))
+    rolled_images = np.zeros( images.shape)
+    for i in range( n_roll):
+        rolled_images[i] = np.roll( images[indices[i]], roll[i], axis=[0,1] ) 
+    rolled_images[n_roll:] = images[indices[n_roll:] ]
+    if shuffle is False:
+        rolled_images = rolled_images[np.argsort( indices)]
+    return rolled_images
 
