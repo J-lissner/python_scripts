@@ -391,7 +391,7 @@ class FullCombination( ConvoCombo ):
     self.build_connector()
 
 
-  def build_connector( self, neurons=[ 160, 100, 60, 30], activation='selu', batch_normalization=True ):
+  def build_connector( self, neurons=[ 80, 45, 30], activation='selu', batch_normalization=True ):
     self.connector = []
     layers = self.connector
     if self.bayesian:
