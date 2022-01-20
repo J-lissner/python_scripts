@@ -371,13 +371,14 @@ class ConvoCombo( VolBypass):
     x = self.predict_inception( x, training) 
     return x + x_vol
 
-class DecoupledFeatures( ConvoCombo):
-    """ 
-    Build a 3 part model where all the different features are treated
-    separately, and no connection between the differently acquired 
-    features is present
-    """
 
+
+class DecoupledFeatures( ConvoCombo):
+  """ 
+  Build a 3 part model where all the different features are treated
+  separately, and no connection between the differently acquired 
+  features is present
+  """ 
   def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
     """
     Parameters:
@@ -385,7 +386,7 @@ class DecoupledFeatures( ConvoCombo):
     bayesian_ouptut:    bool, default False #TO BE IMPLEMENTEd
                         whether to use bayesian layers/probability prediction
     """
-    super( FullCombination, self).__init__( n_output, *args, **kwargs)
+    super( DecoupledFeatures, self).__init__( n_output, *args, **kwargs)
     self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
     self.bayesian = bayesian_output
     self.build_feature_regressor()
@@ -426,7 +427,7 @@ class DecoupledFeatures( ConvoCombo):
     # prediction of the regressor of the cnn features
     for layer in self.regressor:
         x_cnn = layer( x_cnn, training=training) 
-    return x_vol + x_features + x_cnn + x_combined
+    return x_vol + x_features + x_cnn 
 
 
 
