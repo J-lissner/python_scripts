@@ -170,7 +170,7 @@ class Saver():
             if os.path.isfile( code):
                 codefile.write( code )
             elif os.path.isfile( self.script_path + code):
-                print( 'file was not found, read from default path of scripts:', self.script_path )
+                print( 'file "{}" was not found, read from default path of scripts:', code, self.script_path )
                 codefile.write( self.script_path + code )
             else:
                 print( 'WARNING: Following script to save has not been found: {}\n , might lead to issues on trying to reload the model'.format( code) )

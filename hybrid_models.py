@@ -234,17 +234,18 @@ class VolBypass( Model): #previously called 'SeparateVol'
 class ConvoCombo( VolBypass):
   """
   train a model that is linking the volume fraction directly to the
-  output layer and taking all other features in a separate Dense model.
-  it is expected to be used as 
-  model.pretrain_vol( *args) #has to be done in main code because of bug
-  model.freeze_vol()
+  output layer and taking the images to train a ConvNet branch
+  CAREFUL: the regressor from above which used the features is now used
+  to predict the ConvNet features. The next inheriting model will create
+  a new 'feature_predictor' to have a predictor with the inception module
+  and the hand crafted features
   """
   def __init__( self, n_output, *args, **kwargs):
     super( ConvoCombo, self).__init__( n_output, *args, **kwargs)
     # above command should also build vol and build regressor
     self.build_extractor()
     #self.build_vol( )
-    #self.build_regressor( )
+    #self.build_regressor( ) #now used for convnet regressor
 
 
   def build_extractor( self, activation='relu'):
@@ -370,12 +371,13 @@ class ConvoCombo( VolBypass):
     x = self.predict_inception( x, training) 
     return x + x_vol
 
+class DecoupledFeatures( ConvoCombo):
+    """ 
+    Build a 3 part model where all the different features are treated
+    separately, and no connection between the differently acquired 
+    features is present
+    """
 
-class FullCombination( ConvoCombo ):
-  """ build a model in 4 parts, small vol bypass at the top, small-ish
-  sized dense model from the scalar features, small-ish dense from the 
-  convolutional features, as well as a model combining all higher
-  level features """
   def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
     """
     Parameters:
@@ -386,24 +388,7 @@ class FullCombination( ConvoCombo ):
     super( FullCombination, self).__init__( n_output, *args, **kwargs)
     self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
     self.bayesian = bayesian_output
-    self.n_output = n_output
     self.build_feature_regressor()
-    self.build_connector()
-
-
-  def build_connector( self, neurons=[ 80, 45, 30], activation='selu', batch_normalization=True ):
-    self.connector = []
-    layers = self.connector
-    if self.bayesian:
-        pass #TODO TO BE IMPLEMENTED 
-    else: 
-        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
-    for i in range( len( neurons)):
-        layers.append( layer( neurons[i] ) )
-        if batch_normalization:
-            layers.append( BatchNormalization() )
-    layers.append( Dense( self.n_output) )
-
 
   def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
     self.feature_regressor = []
@@ -418,11 +403,65 @@ class FullCombination( ConvoCombo ):
             layers.append( BatchNormalization() )
     layers.append( Dense( self.n_output) )
 
-
   def freeze_feature_predictor( self, freeze=True):
     """ freeze or unfreeze the feature predictor """
     for layer in self.feature_regressor:
         layer.trainable = not freeze
+
+
+  def predict_features( self, x, training=False):
+    """ only predict the part taking all of the features """
+    x = x[:,self.feature_slice]
+    for layer in self.feature_regressor:
+        x = layer( x, training=training)
+    return x
+
+
+  def call( self, features, images, training=False):
+    # predict the volume fraction, features
+    x_vol = self.predict_vol( features, training=training)
+    x_features = self.predict_features( features, training=training)
+    # predict cnn
+    x_cnn = self.extract_features( images, training=training )
+    # prediction of the regressor of the cnn features
+    for layer in self.regressor:
+        x_cnn = layer( x_cnn, training=training) 
+    return x_vol + x_features + x_cnn + x_combined
+
+
+
+class FullCombination( DecoupledFeatures ):
+  """ build a model in 4 parts, small vol bypass at the top, small-ish
+  sized dense model from the scalar features, small-ish dense from the 
+  convolutional features, as well as a model combining all higher
+  level features """
+  def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
+    """
+    Parameters:
+    -----------
+    bayesian_ouptut:    bool, default False #TO BE IMPLEMENTEd
+                        whether to use bayesian layers/probability prediction
+    """
+    super( FullCombination, self).__init__( n_output, *args, **kwargs)
+    self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
+    self.bayesian = bayesian_output
+    self.build_connector() #the remaining build functions are inherited
+
+
+  def build_connector( self, neurons=[ 160, 100, 60, 30], activation='selu', batch_normalization=True ):
+    """ connection between hand crafted features and features from the 
+    convolutional branch """
+    self.connector = []
+    layers = self.connector
+    if self.bayesian:
+        pass #TODO TO BE IMPLEMENTED 
+    else: 
+        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    for i in range( len( neurons)):
+        layers.append( layer( neurons[i] ) )
+        if batch_normalization:
+            layers.append( BatchNormalization() )
+    layers.append( Dense( self.n_output) )
 
   def freeze_connections( self, freeze=True):
     """freeze the full part of the pure CNN part, i.e. feature
@@ -433,12 +472,7 @@ class FullCombination( ConvoCombo ):
 
   #def extract_features( inherited)
   #def predict_vol( inherited)
-  def predict_features( self, x, training=False):
-    """ only predict the part taking all of the features """
-    x = x[:,self.feature_slice]
-    for layer in self.feature_regressor:
-        x = layer( x, training=training)
-    return x
+  #def predict_features(inherited)
   
   def predict_intermediate( self, features, images, training=False):
     x_cnn = self.extract_features( images, training=training )
