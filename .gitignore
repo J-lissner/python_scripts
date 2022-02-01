@@ -1,6 +1,7 @@
 # Ignore temp folders and temp files
 __pycache__/
 
+**/test_functions.py
 
 *.swp
 *.bak

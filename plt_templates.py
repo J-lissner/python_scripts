@@ -98,6 +98,8 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
     default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
     return default_params
 
+
+
 def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     """
     Return matplotlib fig, axes instance for single plot. 
@@ -300,86 +302,29 @@ def axis_labels( ax, xlabel, ylabel, **kwargs):
 
 
 
-####################  DEPECRATED ####################  DEPECRATED ####################  DEPECRATED ####################
-def exact_figsize( x_stretch=1, y_stretch=1, **kwargs):
+
+
+def export_legend( legend_handles, savefile='./legend.pdf'):
     """
-    Return matplotlib fig, axes instance for single plot. 
-    adjusted sizes (font etc) have to be set in the plt.rcParams, not locally on the axes object
-      e.g. with the "rc_default" function in this module
-    The exported figure with fig.savefig() is exactly of size  6x5 cm. DO NOTE USE THE OPTION "bbox_inches" 
-    
+    export a standalone legend which didn't fit on the original image
+    The legend handles can be given by ax.get_legend_handles_labels()
     Parameters:
     -----------
-    x_stretch:      float, default 1
-                    stretch of the figure in x direction (size adjustment)
-    y_stretch:      float, default 1
-                    stretch of the figure in y direction (size adjustment)
-    **kwargs:       dict
-                    input kwargs for plt.subplots( **kwargs), NO GUARANTEES MADE (YET)
-
+    legend_handles: tuple of legend handles
+                    found handles in the ax object
+    savefile:       str, default './legend.pdf'
+                    path and name of file to save to
     Returns:
     --------
-    fig:            matplotlib.pyplot figure object
-                    figure handle for the specified plot
-    axes:           matplotlib.pyplot axes object
-                    axes handle for the specified plot 
+    None:           only saves the legend to savefile
+
     """
-
-    ## fig adjustment
-    cm_conversion = 2.3824 #factor that the specified width/height is given in cm
-    width = 6/cm_conversion * x_stretch
-    height = 5/cm_conversion *y_stretch
-
-    fig, ax = plt.subplots( **kwargs)
-    fig.canvas.draw()
-    fig.set_constrained_layout(False)
-    fig.set_size_inches( width, height) #test if the figure is exactly this size
-    ## ax adjustment
-    ## Parameters adjusting the plot-box based on defined rcParams
-    default_ticksize = 9
-    default_fontsize = 11.7
-    offset = (plt.rcParams['xtick.ticksize']/ default_ticksize -1) * 0.13
-    offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.13
-    title_offset  = (plt.rcParams['font.size']/ default_fontsize-1 )* 0.19
-    ystretch_offset = 0.2 * (y_stretch -1)
-    xstretch_offset = 0.2 * (x_stretch -1)
-    x_correction = 0.1 * (x_stretch -1)
-    y_correction = 0.1 * (y_stretch -1)
-    x_offset = offset - xstretch_offset
-    y_offset = offset - ystretch_offset
-    ## ax position actually given in percentages (mi
-    ax_position = [0.58 + x_offset, 0.44 + y_offset, 1.69 - x_offset + x_correction, 1.64 - y_offset + y_correction - title_offset ]
-    print( 'specified ax position:', np.array(ax_position)/cm_conversion)
-    ax.set_position( np.array( ax_position)/cm_conversion )
-    
-    return fig, ax 
-
-
-
-def set_grid( ax, lw=2.5, ls=':', color='#AAAAAA'):
-    ## DEPECRATED (is given in the default params function )
-    """
-    Set a grid to the given axes object
-    
-    Paramters:
-    ----------
-    ax:     plt.axes object
-            current axes object to add the grid in
-
-    lw:     float, default: 2.5
-            linewidth of the grid
-    ls:     string, defaiult: ':' 
-            linestyle of the grid
-    color:  string, default: '#AAAAAA'
-            color of the grid
-
-    Returns:
-    --------
-    ax:     plt.axes object
-            axes object with added grid
-    """
-    ax.grid( linewidth=2.5, color='#AAAAAA', linestyle=':' )
-    return ax
+    #fig_leg = plt.figure()
+    #ax_leg = fig_leg.add_subplot(111)
+    fig, ax = plt.subplots()
+    ax.legend( *legend_handles, loc='center')
+    ax.axis('off')
+    fig.savefig( savefile, bbox_inches='tight')
 
 
 def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
@@ -439,13 +384,14 @@ def imshow_with_colorbar( ax, image, OPT='ARGS'):
     # TODO IMPLEMENT THIS FUNCTION
 
 
-## ripped from SO, might be useful
-#def add_colorbar(im, aspect=20, pad_fraction=0.5, **kwargs):
-#    """Add a vertical color bar to an image plot."""
-#    divider = axes_grid1.make_axes_locatable(im.axes)
-#    width = axes_grid1.axes_size.AxesY(im.axes, aspect=1./aspect)
-#    pad = axes_grid1.axes_size.Fraction(pad_fraction, width)
-#    current_ax = plt.gca()
-#    cax = divider.append_axes("right", size=width, pad=pad)
-#    plt.sca(current_ax)
-#    return im.axes.figure.colorbar(im, cax=cax, **kwargs)
+#shadows of rc_default function to ommit typos
+# alias of different functions
+def rc_defaults( *args, **kwargs):
+    return rc_default( *args, **kwargs)
+def rcDefaults( *args, **kwargs):
+    return rc_default( *args, **kwargs)
+def rcDefault( *args, **kwargs):
+    return rc_default( *args, **kwargs)
+
+def save_legend( *args, **kwargs):
+    return export_legend( *args, **kwargs) 
