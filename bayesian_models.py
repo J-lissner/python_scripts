@@ -36,6 +36,8 @@ class BayesianNN( Model):
         super( BayesianNN, self).__init__()
         self.architecture = []
         model = self.architecture
+        distribution = lambda params: tfd.Normal(loc=params[...,:n_output],
+                                 scale= 1e-3 + tf.abs(params[...,n_output:])) 
         activation = itertools.cycle( activation)
         for i in range( len( n_neuron) ):
             model.append( tfp.layers.DenseFlipout( n_neuron[i], activation=next(activation), dtype='float64', 
@@ -48,8 +50,7 @@ class BayesianNN( Model):
                                      kernel_divergence_fn=KLD_func, bias_divergence_fn=KLD_func,
                                      bias_posterior_fn=tfp.layers.util.default_mean_field_normal_fn(),
                                      bias_prior_fn=tfp.layers.default_multivariate_normal_fn) )
-        model.append( tfp.layers.DistributionLambda( make_distribution_fn=lambda params: tfd.Normal(loc=params[...,:n_output],
-                                                           scale= 1e-3 + tf.abs(params[...,n_output:])), dtype='float64' )) 
+        model.append( tfp.layers.DistributionLambda( make_distribution_fn=tfp.layers.DistributionLambda( distribution, dtype='float64')  ) )
 
     def call(self, x, training=False):
         for layer in self.architecture:
@@ -86,14 +87,14 @@ class ProbabalisticNN( Model):
         model = self.architecture
         activation = itertools.cycle( activation)
         distribution = lambda params: tfd.Normal(loc=params[...,:n_output],
-                                 scale= 1e-3 + tf.abs(params[...,n_output:]))
-                                 
+                                 scale= 1e-3 + tf.abs(params[...,n_output:])) 
         for i in range( len( n_neuron) ):
             model.append( Dense( n_neuron[i], activation=next(activation), dtype='float64' ) )
             if batch_norm: 
                 model.append( BatchNormalization() )
         model.append( Dense( 2*n_output, activation=next(activation), dtype='float64' ) )
         model.append( tfp.layers.DistributionLambda( make_distribution_fn=tfp.layers.DistributionLambda( distribution, dtype='float64')  ) )
+
 
     def call(self, x, training=False):
         for layer in self.architecture:

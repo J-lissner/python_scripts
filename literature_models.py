@@ -2,6 +2,13 @@ import tensorflow as tf
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
+from my_layers import 
+
+class VGG16(Model):
+    def __init__( self, output_size):
+        self.architecture = []
+        model = self.architecture
+        model.append( 0)
 
 class AlexNet(Model):
     def __init__( self, output_size ):

@@ -202,7 +202,7 @@ def scale_with_shifts( data, scaling):
                 scaled data using 'scaling' 
     """
     if scaling[2] is None:
-        print('Invalid scaletype given, returning raw data')
+        pass
     elif scaling[2] in [ 'single_std1', 'combined_std1']:
         data = scaling[1] * ( data - scaling[0] ) 
     elif  'cov' in scaling[2].lower():
@@ -212,7 +212,7 @@ def scale_with_shifts( data, scaling):
     elif '-1' in scaling[2] and '1' in scaling[2]:
         data = (data - scaling[0]) /scaling[1] *2 -1 
     else:
-        print('Invalid scaletype given, returning raw data') 
+        print('Invalid scaletype given in data_processing.scale_data, returning raw data') 
     return data
 
 
@@ -231,7 +231,7 @@ def unscale_data( data, scaling ):
                 unscaled data using 'scaling' 
     """
     if scaling[2] is None:
-        print('Invalid scaletype given, returning raw data')
+        pass
     elif scaling[2] in [ 'single_std1', 'combined_std1']:
         data = data / scaling[1] + scaling[0] 
     elif  'cov' in scaling[2].lower():
@@ -241,7 +241,7 @@ def unscale_data( data, scaling ):
     elif '-1' in scaling[2] and '1' in scaling[2]:
         data = (data + 1) * scaling[1]/2 + scaling[0]  
     else:
-        print('Invalid scaletype given, returning raw data') 
+        print('Invalid scaletype given in data_processing.unscale_data, returning raw data') 
     return data
 
 

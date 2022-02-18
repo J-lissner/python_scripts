@@ -16,8 +16,9 @@ class Model( Model):
     call, predict, predict_validation
     and inherit them, that I have less copied lines of code
     """
-    def __init__( self, *args, **kwargs):
+    def __init__( self, n_output, *args, **kwargs):
         super( Model, self).__init__()
+        self.n_output = n_output
         self.architecture = []
 
     def call(self, x, training=False, *args, **kwargs):
@@ -319,6 +320,44 @@ class TranslationInvariant( VolBypass):
     for layer in self.regressor:
         x = layer(x, training=training)
     return x
+
+
+
+class OnlyCnn( Model):
+    """ a naked convolutional neural network without anything else """
+    def __init__( self, n_output):
+        super().__init__( n_output)
+        self.build_model()
+
+    def build_model( self, dense=[100, 70, 40], activation='selu', batch_norm=True, **conv_architecture ):
+        """
+        build the full model with the convolutional layers and the dense part at the end.
+        Constructs the dense part with the args and the conv layers with the kwargs
+        Default kwargs are given.
+        The args are quite static so if a different model has to be implemented this
+        might have to be changed.
+        """
+        kernels = conv_architecture.pop( 'kernels', [7,7,5,5])
+        strides = conv_architecture.pop( 'strides', [2,2,2,2])
+        filters = conv_architecture.pop( 'filters', [12,24,36,48])
+        pooling = conv_architecture.pop( 'pooling', False)
+        conv_net = []
+        for i in range( len(kernels)):
+             conv_net.append( Conv2DPeriodic( filters=filters[i], kernel_size=kernels[i], strides=strides[i], activation=activation) )
+             if pooling:
+                 conv_net.append( MaxPool2DPeriodic( 2) )
+        conv_net.append( Flatten() )
+        predictor = []
+        if batch_norm is True:
+            predictor.append( BatchNormalization() )
+        for i in range( len(dense)):
+            predictor.append( Dense( dense[i], activation=activation ) )
+            if batch_norm is True:
+                predictor.append( BatchNormalization() )
+        predictor.append( Dense( self.n_output, activation=None ) )
+        #put into attribute
+        self.architecture.extend( conv_net)
+        self.architecture.extend( predictor)
 
 
 

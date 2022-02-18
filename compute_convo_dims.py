@@ -34,3 +34,11 @@ def output_dimension( input_resolution, kernel_size, stride=1, channels=1, paddi
         output_resolution = np.hstack( (output_resolution, channels) )
     return output_resolution
 
+if __name__ == '__main__':
+    ke = [7,7,5,5]
+    st = [2,2,2,2]
+    output_dim = (400, 400)
+    for k, s in zip( ke, st  ):
+
+        output_dim  = output_dimension( output_dim, k, s)
+    print( output_dim )

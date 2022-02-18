@@ -278,7 +278,6 @@ class ConvoCombo( VolBypass):
     # third block with average pooling and a medium sized filter
     avg_small = self.inception_1[3]
     avg_small.append( AvgPool2DPeriodic( pool_size=5))
-    avg_small.append( BatchNormalization() )
     avg_small.append( Conv2DPeriodic( filters=25, kernel_size=3, strides=2, activation=activation ) )
     avg_small.append( AvgPool2DPeriodic( pool_size=4) )
     avg_small.append( BatchNormalization() )
