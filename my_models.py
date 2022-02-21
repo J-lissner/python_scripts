@@ -329,24 +329,46 @@ class OnlyCnn( Model):
         super().__init__( n_output)
         self.build_model()
 
-    def build_model( self, dense=[100, 70, 40], activation='selu', batch_norm=True, **conv_architecture ):
+    def build_model( self,  dense=[100,70,50,30], activation='selu', batch_norm=True, **conv_architecture ):
         """
-        build the full model with the convolutional layers and the dense part at the end.
-        Constructs the dense part with the args and the conv layers with the kwargs
-        Default kwargs are given.
-        The args are quite static so if a different model has to be implemented this
-        might have to be changed.
-        """
-        kernels = conv_architecture.pop( 'kernels', [7,7,5,5])
-        strides = conv_architecture.pop( 'strides', [2,2,2,2])
-        filters = conv_architecture.pop( 'filters', [12,24,36,48])
-        pooling = conv_architecture.pop( 'pooling', False)
-        conv_net = []
+        dense:          list like of ints, default [256,128,64,32]
+                        dense layer after pooling
+        activation:     str or list like of str, default 'selu'
+                        activation function for dense layer
+        batch_norm:     bool, default True
+                        whether to apply batch normalization after dense and pooling
+        **conv_architecture with default values:
+        kernels:        list like of ints, default [11,7,5,3,3]
+                        dimension of each kernel, len(kernels) == n_conv
+        strides:        list like of ints, default [4,3,3,2,2]
+                        stride of each kernel, has to match len( kernels)
+        filters:        list like of ints, default [32,32,64,64,96]
+                        number of channels per layer, has to match len( kernels)
+        pooling:        bool or list of ints, default True
+                        if booling should be applied after every layer,
+                        can be specified with ints, defaults to size 2 in each layer
+        Returns:
+        --------
+        None:           allocates architecture inside
+        """ 
+        ## Input preprocessing
+        kernels = conv_architecture.pop( 'kernels', [11,7,5,3,3])
+        strides = conv_architecture.pop( 'strides', [4,3,3,2,2])
+        filters = conv_architecture.pop( 'filters', [32,32,64,64,96])
+        pooling = conv_architecture.pop( 'pooling', True)
+        if isinstance( pooling, bool) and pooling is True:
+            pooling = n_conv*[2]
+        elif isinstance( pooling, int):
+            pooling = n_conv*[pooling]
+        elif pooling is False:
+            pooling = n_conv*[pooling]
+        ## build conv net
         for i in range( len(kernels)):
              conv_net.append( Conv2DPeriodic( filters=filters[i], kernel_size=kernels[i], strides=strides[i], activation=activation) )
-             if pooling:
-                 conv_net.append( MaxPool2DPeriodic( 2) )
+             if pooling[i]:
+                 conv_net.append( MaxPool2DPeriodic( pooling[i]) )
         conv_net.append( Flatten() )
+        ## build the regressor part
         predictor = []
         if batch_norm is True:
             predictor.append( BatchNormalization() )
@@ -360,90 +382,23 @@ class OnlyCnn( Model):
         self.architecture.extend( predictor)
 
 
-
-class GenericCnn( VolBypass):
-  def __init__( self, n_output ):
-    """
-    Get a generic deep conv net
-    Parameters:
-    -----------
-    n_output:       int
-                    size of output
-    """
+class CnnBypass( OnlyCnn, VolBypass):
+  """ take the same architecture as the only cnn and add the vol bypass """
+  def __init__( self, n_output, *args, **kwargs):
     super().__init__( n_output)
-    self.build_model()
 
-  def build_model( self,  dense=[100,70,50,30], activation='selu', batch_norm=True, pre_pool=3, **conv_architecture ):
-    """
-    dense:          list like of ints, default [256,128,64,32]
-                    dense layer after pooling
-    activation:     str or list like of str, default 'selu'
-                    activation function for dense layer
-    batch_norm:     bool, default True
-                    whether to apply batch normalization after dense and pooling
-    pre_pool:       int, default 0
-                    downsampling of resolution of input image via average pooling
-    **conv_architecture with default values:
-    kernels:        list like of ints, default [11,7,5,3,3]
-                    dimension of each kernel, len(kernels) == n_conv
-    strides:        list like of ints, default [4,3,3,2,2]
-                    stride of each kernel, has to match len( kernels)
-    filters:        list like of ints, default [32,32,64,64,96]
-                    number of channels per layer, has to match len( kernels)
-    pooling:        bool or list of ints, default True
-                    if booling should be applied after every layer,
-                    can be specified with ints
-    Returns:
-    --------
-    None:           allocates architecture inside
-    """ 
-    self.conv = []
-    model = self.conv
-    kernels = conv_architecture.pop( 'kernels', [11,7,5,3,3])
-    strides = conv_architecture.pop( 'strides', [4,3,3,2,2])
-    filters = conv_architecture.pop( 'filters', [32,32,64,64,96])
-    pooling = conv_architecture.pop( 'pooling', True)
-    n_conv = len( kernels)
-    n_dense = len( dense)
-    if isinstance( pooling, bool) and pooling is True:
-        pooling = n_conv*[2]
-    elif isinstance( pooling, int):
-        pooling = n_conv*[pooling]
-    else:
-        pooling = n_conv*[False]
-    if isinstance( activation, str) or activation is None:
-        activation = (n_conv+n_dense)*[activation]
-    ## model building
-    if pre_pool:
-        model.append( AvgPool2DPeriodic( pre_pool) )
-    for i in range( n_conv):
-        model.append( Conv2DPeriodic( filters[i], kernels[i], strides[i], activation=activation[i] ) )
-        if pooling[i]:
-            model.append( MaxPool2DPeriodic( pooling[i] ) )
-    model.append( BatchNormalization())
-    model.append( Flatten() )
-    ## build regressor
-    self.regressor = []
-    model = self.regressor
-    for i in range( n_dense):
-        model.append( Dense( dense[i], activation=activation[i+n_conv]) )
-        if batch_norm:
-            model.append(  BatchNormalization() )
-    model.append( Dense( self.n_output) )
+  def predict_cnn( x, training=False):
+    """ take the images and predict the cnn"""
+    for layer in self.architecture:
+        x = layer( x, training=training) 
 
-  def call( self, images, vol=None, training=False):
-      """ x is image data, x_vol = volume fraction """
-      x_vol = self.predict_vol( vol, training=training)
-      x = self.predict_cnn( images)
-      return  x + x_vol
-
-  def predict_cnn( self, x, training=False):
-      for layer in self.conv:
-          x = layer( x, training=training)
-      for layer in self.regressor:
-          x = layer(x, training=training)
-      return x
-
+  def call( images, vol=None, training=False, *args, **kwargs):
+    """ full prediction of the model, compute the volume fraction if not given"""
+    if vol is None: 
+        vol = tf.reshape( tf.reduce_mean( images, axis=[1,2,3] ), (-1, 1) )
+    x_vol = self.predict_vol( vol, training )
+    x_cnn = self.predict_cnn( images, training)
+    return x_vol + x_cnn
 
 
 
