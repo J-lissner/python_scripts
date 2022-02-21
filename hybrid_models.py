@@ -36,7 +36,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     self.n_output = n_output
     self.n_vol = n_vol
     self.vol_slice = slice( 0, n_vol)
-    self.feature_slice = slice( n_vol, None)
+    self.feature_slice = slice( max(1, n_vol-1), None)
     self.build_vol( )
     self.build_regressor( )
 
@@ -62,7 +62,7 @@ class VolBypass( Model): #previously called 'SeparateVol'
     self.vol_part.append( Dense( self.n_output, activation=None ) ) 
 
 
-  def build_regressor(self, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
+  def build_regressor(self, neurons=[120,90,50], activation='selu', batch_normalization=True, **architecture_todo): 
     """
     build the architecture of the remaining Dense model.
     Parameters:
@@ -328,7 +328,25 @@ class ConvoCombo( VolBypass):
                   layer.trainable = not freeze
 
 
-  def extract_features( self, images, training=False):
+  def extract_features( self, images, extra_features=[], training=False):
+    """
+    Extract the features based off the images and append extra features if given
+    Parameters:
+    -----------
+    images:         tensor like
+                    4 channel input tensor, n_samples, res_x, rex_y, n_channels
+    extra_features: list of array-like
+                    potential extra features to append to the conv net features
+                    can take multiple arrays, have to be of shape n_samples x ?
+    training:       bool, default False
+                    variable for the layers to set to True during training
+    Returns:
+    -------- 
+    x:              tensorflow.tensor
+                    n_samples x n_features feature vector after convolution
+    """
+    if not isinstance( extra_features, list):
+        extra_features = [extra_features]
     x = []
     #first inception layer
     for i in range( len( self.inception_1) -1 ):
@@ -348,26 +366,46 @@ class ConvoCombo( VolBypass):
                 x_pool.append( self.poolers[i][j]( images) )
             else:
                 x_pool[i] = self.poolers[i][j]( x_pool[i] ) 
-    x_pool = concatenate( x_pool)
+    x_pool = concatenate( x_pool + extra_features)
     return concatenate( [x, x_pool])
 
-  def predict_inception( self, images, training=False):
-    x = self.extract_features( images, training)
+  def predict_inception( self, images, extra_features=[], training=False):
+    """
+    Extract the features based off the images and append extra features if given
+    Parameters:
+    -----------
+    images:         tensor like
+                    4 channel input tensor, n_samples, res_x, rex_y, n_channels
+    extra_features: list of array-like
+                    potential extra features to append to the conv net features
+                    can take multiple arrays, have to be of shape n_samples x ?
+    training:       bool, default False
+                    variable for the layers to set to True during training
+    Returns:
+    -------- 
+    x:              tensorflow.tensor
+                    n_samples x n_outputs prediction of the inception part
+    """
+    x = self.extract_features( images, extra_features, training)
     for layer in self.regressor:
         x = layer( x, training=training) 
     return x
 
 
-  def call(self, x, vol=None, training=False):
+  def call(self, x, vol=None, extra_features=[], training=False):
     """
     Predict the model outputs given the image inputs.
     If the volume fraction is precomputed, then it is not computed from
     the images inside the call (efficiency purpose during training)
+    Parameters:
+    -----------
+    extra_features: list of tensor like
+                    additional features to concatenate after convolution layers
     """
     if vol is None: 
         vol = tf.reshape( tf.reduce_mean( x, axis=[1,2,3] ), (-1, 1) )
     x_vol = self.predict_vol( vol, training )
-    x = self.predict_inception( x, training) 
+    x = self.predict_inception( x, extra_features=extra_features, training=training) 
     return x + x_vol
 
 
@@ -417,12 +455,19 @@ class DecoupledFeatures( ConvoCombo):
     return x
 
 
-  def call( self, features, images, training=False):
+  def call( self, features, images, extra_features=[], training=False):
+    """
+    Predict the full model wit hall subparts
+    If variable contrast is trained (i.e. vol slice.stop >1 then the phase contrast
+    is automatically passed as extra features for the inception part
+    """
     # predict the volume fraction, features
     x_vol = self.predict_vol( features, training=training)
     x_features = self.predict_features( features, training=training)
     # predict cnn
-    x_cnn = self.extract_features( images, training=training )
+    if not extra_features and self.vol_slice.stop == 2:
+        extra_features = [ tf.reshape( features[:,1], (-1,1) ) ]
+    x_cnn = self.extract_features( images, extra_features=extra_features, training=training )
     # prediction of the regressor of the cnn features
     for layer in self.regressor:
         x_cnn = layer( x_cnn, training=training) 
@@ -443,7 +488,7 @@ class FullCombination( DecoupledFeatures ):
                         whether to use bayesian layers/probability prediction
     """
     super( FullCombination, self).__init__( n_output, *args, **kwargs)
-    self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
+    self.build_regressor( )#inherited to build the connection from CNN to output
     self.bayesian = bayesian_output
     self.build_connector() #the remaining build functions are inherited
 
@@ -484,6 +529,10 @@ class FullCombination( DecoupledFeatures ):
 
 
   def call( self, features, images, training=False):
+    """
+    predict the full model, CARE: EXTRA FEATURES NOT IMPLEMENTED HERE
+    (since this model was worse than decoupled features and will not be used subsequently
+    """
     # predict the volume fraction, features
     x_vol = self.predict_vol( features, training=training)
     x_features = self.predict_features( features, training=training)
