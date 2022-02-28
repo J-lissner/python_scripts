@@ -26,6 +26,11 @@ class Model( Model):
             x = layer( x, training=training)
         return x
 
+    def freeze( self, freeze=True):
+        """ freeze the generic model which is given in any default ann"""
+        for layer in self.architecture:
+            layer.trainable = not freeze
+
     def predict( self, x):
         return self( x, training=False )
 
@@ -344,6 +349,8 @@ class OnlyCnn( Model):
                         stride of each kernel, has to match len( kernels)
         filters:        list like of ints, default [32,32,64,64,96]
                         number of channels per layer, has to match len( kernels)
+        pre_pool:       int, default 2
+                        how much the image should be downsampled before convolution
         pooling:        bool or list of ints, default True
                         if booling should be applied after every layer,
                         can be specified with ints, defaults to size 2 in each layer
@@ -356,6 +363,8 @@ class OnlyCnn( Model):
         strides = conv_architecture.pop( 'strides', [4,3,3,2,2])
         filters = conv_architecture.pop( 'filters', [32,32,64,64,96])
         pooling = conv_architecture.pop( 'pooling', True)
+        pre_pool = conv_architecture.pop( 'pre_pool', 2)
+        n_conv = len( kernels)
         if isinstance( pooling, bool) and pooling is True:
             pooling = n_conv*[2]
         elif isinstance( pooling, int):
@@ -363,6 +372,9 @@ class OnlyCnn( Model):
         elif pooling is False:
             pooling = n_conv*[pooling]
         ## build conv net
+        conv_net = []
+        if pre_pool:
+            conv_net.append( AvgPool2DPeriodic( pre_pool) )
         for i in range( len(kernels)):
              conv_net.append( Conv2DPeriodic( filters=filters[i], kernel_size=kernels[i], strides=strides[i], activation=activation) )
              if pooling[i]:
@@ -387,12 +399,14 @@ class CnnBypass( OnlyCnn, VolBypass):
   def __init__( self, n_output, *args, **kwargs):
     super().__init__( n_output)
 
-  def predict_cnn( x, training=False):
+  def predict_cnn(self, x, training=False):
     """ take the images and predict the cnn"""
     for layer in self.architecture:
         x = layer( x, training=training) 
+    return x
 
-  def call( images, vol=None, training=False, *args, **kwargs):
+
+  def call(self, images, vol=None, training=False, *args, **kwargs):
     """ full prediction of the model, compute the volume fraction if not given"""
     if vol is None: 
         vol = tf.reshape( tf.reduce_mean( images, axis=[1,2,3] ), (-1, 1) )
