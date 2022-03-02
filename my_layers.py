@@ -1,6 +1,7 @@
 # includes
 
-from tensorflow.keras.layers import Conv2D, concatenate, AveragePooling2D, MaxPool2D
+from tensorflow.keras.layers import Conv2D, Concatenate, concatenate, AveragePooling2D, MaxPool2D
+from tensorflow.keras.layers import BatchNormalization, Dense
 from tensorflow.python.ops import nn, nn_ops
 
 def pad_periodic( kernel_size, data):
@@ -124,4 +125,75 @@ class MaxPool2DPeriodic( MaxPool2D):
         else:
             raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
 
+
+class InceptionModule():
+  def __init__( self, n_out=32, n_branch=12, downsample=4, max_kernel=5, pooling='average', activation='selu'):
+    """
+    Define an inception module which has a 1x1 bypass and multiple two deep
+    convolutional branches. The number of conovlutional branches is computed
+    by <(max_kerrnel-1)//2>, since it takes them of a 2 increment.
+    The inception module achieves downsampling through stride and <pooling>
+    the 1x1 bypass. Always takes the periodically padded layers.
+    Parameters:
+    -----------
+    n_out:          int, default 32
+                    number of output channels of the inception module
+    n_branch:       int, default 12
+                    number of channels per branch in inception module
+    downsample:     int, default 4
+                    downsampling, must be power of 2
+    max_kernel:     int, default 5
+                    maximum size of the second kernel in the layer
+                    preferably an odd number
+    pooling:        string, default 'average'
+                    max or average pooling conducted before the 1x1 bypass
+    activation:     string, default 'selu'
+                    activation function at each convolutional kernel
+    """
+    ## input preprocessing and variable allocation
+    n_conv = (max_kernel-1)//2
+    self.inception = []
+    ## 1x1 bypass and concatenation
+    bypass = []
+    concat = [Concatenate()]
+    if 'average' in pooling:
+        bypass.append( AvgPool2DPeriodic( downsample)  )
+    elif 'max' in pooling:
+        bypass.append( MaxPool2DPeriodic( downsample)  )
+    bypass.append( Conv2D( filters=n_branch, kernel_size=1, strides=1, activation=activation) )
+    concat.append( Conv2D( filters=n_out, kernel_size=1, strides=1, activation=activation) )
+    concat.append( BatchNormalization() )
+    ## different convolution branches
+    for i in range( n_conv):
+        self.inception.append( [Conv2DPeriodic( filters=n_branch, kernel_size=3, strides=min(downsample,2), activation=activation ) ])
+        k = 1
+        while 2*k/downsample < 1 or k < i:
+          kernel_size = min(k,i)*2 + 3 
+          if downsample/(k*2) > 1:
+              stride = 2
+          else: 
+              stride = 1
+          self.inception[i].append( Conv2DPeriodic( filters=n_branch, kernel_size=kernel_size, strides=stride, activation=activation ) )
+          k += 1
+    ## concatenation and 1x1 convolution 
+    self.inception.insert( 0, bypass)
+    self.inception.append( concat )
+
+
+  def __call__( self, images, training=False, *args, **kwargs):
+    """ 
+    evaluate the inception module, simply evaluate each branch and
+    keep the output of each branch in memory until concatenated 
+    """
+    x = []
+    for i in range( len( self.inception) -1 ):
+        for j in range( len( self.inception[i]) ):
+            if j == 0:
+                x.append( self.inception[i][j]( images, training=training) )
+            else:
+                x[i] = self.inception[i][j]( x[i], training=training ) 
+    #concatenation and 1x1 convo
+    for layer in self.inception[-1]:
+        x = layer( x, training=training)
+    return x
 

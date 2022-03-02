@@ -5,7 +5,7 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, InceptionModule
 from hybrid_models import VolBypass
 
 
@@ -416,3 +416,21 @@ class CnnBypass( OnlyCnn, VolBypass):
 
 
 
+class InceptionTest( Model):
+  def __init__( self, n_output, n_neurons=[128,80,64,32], n_channels=[32,64,128], downsampling=4, *args, **kwargs):
+    """
+    try out the defined inception module from my layers, simply take a few of those
+    and take some generic dense model therafter
+    """
+    super().__init__( n_output)
+    model = self.architecture
+    model.append( AvgPool2DPeriodic( downsampling) )
+    ## inception modules 
+    for n in n_channels:
+        model.append( InceptionModule( n_out=n, n_branch=n//4) )
+    model.append( Flatten() )
+    ## dense regressor
+    for n in n_neurons:
+        model.append( Dense(n, activation='selu' ) )
+        model.append( BatchNormalization() )
+    model.append( Dense( n_output) )
