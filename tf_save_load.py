@@ -1,8 +1,11 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 
-#import pickle
-import dill as pickle
+import numpy as np
+import dill as pickle #import pickle
+import re
+import subprocess
+import sys
 from importlib import import_module 
 from zipfile import ZipFile
 
@@ -68,8 +71,8 @@ class Saver():
             print( 'file for models not found, taking default path of scripts:', self.script_path)
             os.system( 'cp {} {}/custom_model.py'.format( self.script_path+model_code, self.savepath) ) 
 
-        with open( '{}/model_name.pkl'.format( self.savepath), 'wb') as pklfile:
-            pickle.dump( model_name, pklfile) 
+        with open( '{}/model_name.txt'.format( self.savepath), 'w') as textfile:
+            textfile.write( model_name)
         model.save_weights('{}/weights/'.format( self.savepath), save_format='tf')
 
 
@@ -122,16 +125,19 @@ class Saver():
                     official documentation of the 'load_locals()' method
         """
         if kwargs:
-            with open( '{}/local_kwargs.pkl'.format( self.savepath), 'wb') as pklfile:
-                pickle.dump( kwargs, pklfile)
+          with open( '{}/local_kwargs.pkl'.format( self.savepath), 'wb') as pklfile:
+            try:
+              pickle.dump( kwargs, pklfile)
+            except:
+              print( 'WARNING, could not store locals, prolly because its a "compiled" tf.function' )
         else:
-            print( 'no kwargs given, please specify at least optimizer and loss' )
+            print( 'no kwargs given, it is recommended to store at least optimizer and loss' )
 
 
-    def scaling(self, input_scaling, output_scaling):
+    def scaling(self, input_scaling, output_scaling, **scalings):
         #TODO add another set of 'manual scaling' given as functions with inverse scaling requirement
         # then simply call these on the input when they are put LAST (to scale) on the data
-        scalings = { 'input':input_scaling, 'output':output_scaling}
+        scalings = dict( input=input_scaling, output=output_scaling, **scalings)
         with open( '{}/scalings.pkl'.format( self.savepath), 'wb') as pklfile:
             pickle.dump( scalings, pklfile)
 
@@ -170,7 +176,7 @@ class Saver():
             if os.path.isfile( code):
                 codefile.write( code )
             elif os.path.isfile( self.script_path + code):
-                print( 'file "{}" was not found, read from default path of scripts:', code, self.script_path )
+                print( 'file "{}" not found locally, but was found and taken from default script path'.format( code ) )
                 codefile.write( self.script_path + code )
             else:
                 print( 'WARNING: Following script to save has not been found: {}\n , might lead to issues on trying to reload the model'.format( code) )
@@ -256,7 +262,11 @@ class Loader():
         Model:      restored instance of the user defined model
                     restores the saved weights as well as the defined architecture
         """
-        with open( '{}/model_name.pkl'.format( self.load_path), 'rb') as string_file:
+        try:
+          with open( '{}/model_name.pkl'.format( self.load_path), 'r') as textfile:
+            model_name = textfile.read()
+        except:
+          with open( '{}/model_name.pkl'.format( self.load_path), 'rb') as string_file:
             model_name = pickle.load( string_file)
         model_code = '{}/custom_model'.format( self.load_path).replace('//','.') 
         model_code = model_code.replace('/','.') 
@@ -386,6 +396,7 @@ class Retraining(Loader):
         os.system( 'touch {}/__init__.py'.format( self.save_path) )
         os.system( 'cp {}/custom_model.py {}/custom_model.py'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/model_name.pkl  {}/model_name.pkl'.format( self.load_path, self.save_path) ) 
+        os.system( 'cp {}/model_name.txt  {}/model_name.txt'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/init_args.pkl   {}/init_args.pkl'.format( self.load_path, self.save_path) ) 
         os.system( 'cp {}/init_kwargs.pkl {}/init_kwargs.pkl'.format( self.load_path, self.save_path) ) 
         ## copy previously stored locals and scalings
@@ -453,3 +464,69 @@ class PartialArchitecture( Loader):
         model.load_weights( '{}/weights/'.format( self.load_path) )
         return model
 
+
+def find_best(  logfile):
+  """
+  Find the best model out of multiple models trained for the same output file
+  Only works for the current console output of the training where we have
+  specific formatting. Some examples are found everywhere.
+  Only works for dos formatted log files, or other which share the same
+  newline, etc. character.
+  e.g. on daework3:~/tf_models/conv_nets/logs, some commit around start of 2022
+  prints the best models w.r.t. valid loss, valid+train loss, train loss (for comparison)
+  Disclaimer: this script is pretty garbace since its so case specific, anyways...
+  Parameters:
+  -----------
+  logfile:    str
+              string to the log file with the specific formatting
+  Returns:
+  --------
+  best_model: list of ints
+              numbering of the best model w.r.t. the above criteria, also prints to console
+  """ 
+  if logfile[-4:] != '.log':
+    try:
+        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile + '.log'), shell=True, stdout=subprocess.PIPE)
+    except:
+        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+  else: 
+        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+  x = str( finished_trainings.communicate()[0]) #console output from bytes to single string
+  y = x.split( '\\r' )
+  interval = 8 #number of lines left after popping lines
+  valid_losses = []
+  train_losses = []
+  model_nr = []
+  isnumber = [str(x) for x in range(10) ] + list( range(10) )
+  for j in range( len( y) ):
+    if j % interval == 0:
+      nr = ''
+      for letter in y[j][-5:]:
+          if letter in isnumber: 
+              nr += letter
+      if not nr:
+          break
+      model_nr.append( int( nr) )
+      #model_nr.append( int( re.search( '.*[0-9]*', y[j]).group()[:-7] ) )
+    elif (j-6) % interval == 0:
+      valid_losses.append( float( y[j].split( '\\t')[-1].replace( ',','') ) ) 
+    elif (j-7) % interval == 0:
+      train_losses.append( float( y[j].split( '\\t')[-1].replace( ',','') ) ) 
+  combined_losses = [x+y for x,y in zip(valid_losses,train_losses) ]
+  best_models = [ valid_losses.index( min(valid_losses)) ]
+  best_models.append( combined_losses.index( min(combined_losses)) )
+  best_models.append( train_losses.index(min(train_losses)) ) 
+  stoud = """Best models with respect to the given criteria are
+    criteria valid loss, model_nr: {}
+          valid_loss: {:.4e}
+          train_loss: {:.4e}
+    criteria sum losses, model_nr: {}
+          valid_loss: {:.4e}
+          train_loss: {:.4e}
+    criteria train loss, model_nr: {}
+          valid_loss: {:.4e}
+          train_loss: {:.4e}""" 
+  print( stoud.format( model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
+                       model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
+                       model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]] ) )
+  return [ model_nr[x] for x in best_models] 
