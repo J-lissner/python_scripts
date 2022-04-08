@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 
 #@tf.function decorator not written here, because it does not allow to train multiple ANN
 def train_step(x, y, model, loss_object, **model_kwargs):
@@ -22,6 +23,43 @@ def train_step(x, y, model, loss_object, **model_kwargs):
         loss = loss_object( y, y_pred )
     gradients = tape.gradient( loss, model.trainable_variables)
     return gradients, loss, y_pred
+
+
+
+def relative_mse( y, y_pred, axis=None):
+    """
+    Compute the relative MSE for the predicted values. The mse 
+    is analogue to the frobenius norm for default inputs (and real valued y)
+    if axis is specified it can also compute it component wise.
+    Note that tf_function decorator makes it unable to store in pickle,
+    but might help efficiency
+    Parameters:
+    -----------
+    y:      tensorflow tensor
+            target value
+    y_pred: tensorflow tensor
+            predicted_value
+    axis:   bool, default None
+            which axis to reduce, reduces to scalar value per default 
+    Returns:
+    --------
+    loss:   scalar or tensorflow tensor
+            loss of the prediction
+    """
+    y_norm = tf.reduce_sum( tf.square(y), axis=axis )
+    error = tf.reduce_sum( tf.square(y-y_pred), axis=axis)
+    loss = error/y_norm
+    return loss
+
+def to_float32( *args, arraytype='numpy'):
+    """ convert multiple arrays to float 32, if tensorflow tensors specify the kwarg"""
+    return_values = []
+    for arg in args:
+      if arraytype == 'numpy':
+        return_values.append( arg.astype( np.float32) )
+      elif arraytype in ['tf', 'tensorflow']:
+        return_values.append( tf.cast( arg, tf.float32) )
+    return return_values
 
 
 def evaluation( x, y, model, loss_object, **model_kwargs):
