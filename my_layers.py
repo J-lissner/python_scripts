@@ -197,3 +197,55 @@ class InceptionModule():
         x = layer( x, training=training)
     return x
 
+
+class LiteratureInception():
+  def __init__( self, n_branch=12, activation='selu'): #n_out=32
+    """
+    Define an inception module which has a 1x1 bypass and multiple two deep
+    convolutional branches. The module architecture is directly copied
+    from the paper 'we need to go deeper'
+    Parameters:
+    -----------
+    n_branch:       int, default 12
+                    number of channels per branch in inception module
+    activation:     string, default 'selu'
+                    activation function at each convolutional kernel
+    """
+    self.inception = [] #will be a nested list where each sublist is one branch
+    conv = lambda size: Conv2D( filters=n_branch, kernel_size=size, strides=1, activation=activation)
+    bypass = [conv( 1)]
+    concat = [Concatenate()]
+    #concat.append( Conv2D( filters=n_out, kernel_size=1, strides=1, activation=activation) )
+    #concat.append( BatchNormalization() )
+    ## first branch
+    self.inception.append( [conv(1)] )
+    self.inception[-1].append( conv(3) )
+    ## second branch
+    self.inception.append( [conv(1)] )
+    self.inception[-1].append( conv(5) )
+    ## third branch
+    self.inception.append( [MaxPool2D( 3, 1)] )
+    self.inception[-1].append( conv(5) )
+    self.inception.insert( bypass, 0)
+    self.inception.append( concat)
+
+
+  def __call__( self, images, training=False, *args, **kwargs):
+    """ 
+    evaluate the inception module, simply evaluate each branch and
+    keep the output of each branch in memory until concatenated 
+    """
+    x = []
+    ## evaluate each model separately, store the results in a list
+    for i in range( len( self.inception) -1 ):
+        for j in range( len( self.inception[i]) ):
+            if j == 0:
+                x.append( self.inception[i][j]( images, training=training) )
+            else:
+                x[i] = self.inception[i][j]( x[i], training=training ) 
+    ##concatenation (and 1x1 convo)
+    for layer in self.inception[-1]:
+        x = layer( x, training=training)
+    return x
+
+

@@ -1,10 +1,8 @@
 import numpy as np
 import h5py
 from math import ceil, floor
-try:
-    from tensorflow import gather
-except:
-    gather = lambda x, permutation: np.take( x, permutation, axis=0 )
+try: import tensorflow as tf
+except: pass
 
 ##################### GENERAL DATA TRANSFORMATION FOR ARBITRARY DATA ####################
 def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, slave_outputs=None):
@@ -47,10 +45,9 @@ def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, sla
         shuffle = np.random.permutation(n_data)
         inputs = inputs[shuffle]
         outputs = outputs[shuffle]
-        if slave_inputs is not None:
-            slave_inputs = slave_inputs[shuffle]
-        if slave_outputs is not None:
-            slave_outputs = slave_outputs[shuffle]
+        slave_inputs = slave_inputs[shuffle] if slave_inputs is not None else slave_inputs
+        slave_outputs = slave_outputs[shuffle] if slave_outputs is not None else slave_outputs
+    ## conditional return statements depending on the amount of sets
     if slave_inputs is None and slave_outputs is None: 
         return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:]
     elif slave_outputs is None:
@@ -146,8 +143,7 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     n, m  = data.shape[:2]
     scaling = [None,None, scaletype]
     if scaling[2] is None:
-        print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
-        print( "valid options are: 'single_std1', 'combined_std1', '0-1', '-1,1', try help(scale_data)\n###################################" )
+        pass
     elif scaling[2].lower() in [ 'default', 'single_std1'] :
         scaling[0] = np.mean( data, 0)
         data       = data - scaling[0]
@@ -166,8 +162,7 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         data = data - scaling[0]
         scaling[1] = np.cov( data, rowvar=False)  + nugget * np.eye(data.shape[1] )
         #scaling[1] = np.linalg.cholesky( np.cov( data, rowvar=False)+ nugget * np.eye(data.shape[1] )) 
-        data =  data @ np.linalg.inv( scaling[1] )
-
+        data =  data @ np.linalg.inv( scaling[1] ) 
 
     elif '0' in scaling[2] and '1' in scaling[2]:
         scaling[0] = np.min( data, 0)
@@ -180,6 +175,9 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         data       = data - scaling[0]      
         scaling[1] = np.max( data, 0)     
         data       = data /scaling[1] *2 -1 
+    else:
+        print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
+        print( "valid options are: 'single_std1', 'combined_std1', '0-1', '-1,1', try help(scale_data)\n###################################" )
     if slave_data is not None:
         slave_data = scale_with_shifts( slave_data, scaling)
         return data, slave_data, scaling #automaticall returns the unscalinged data if a wrong scaling is specified
@@ -320,10 +318,10 @@ class CrossValidation():
 
 
 
-def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None, numpy=True):
+def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None, **kwargs):
     """
-    Generator/Factory function, yields 'n_batches' batches when called as
-    a 'for loop' argument.  The last batch is the largest if the number of
+    Batch all of the given data into <n_batches> and return the data as 
+    list of data. The last batch is the largest if the number of
     samples is not integer divisible by 'n_batches' (the last batch is at
     most 'n_batches-1' larger than the other batches)
     Also enables a stochastic chosing of the training samples by ommiting
@@ -341,58 +339,96 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     stochastic:     float, default 0.5
                     if the data should be stochastically picked, has to be <=1
                     only available if <shuffle> is True
-    x_extra:        numpy array, default None
+    x_extra:        numpy array or list of arrays, default None
                     additional input data, asserts that len(x) == len( x_extra)
     y_extra:        numpy array, default None
                     additional output data
-    numpy:          bool, default True
-                    if all arrays are numpy arrays and not tf.tensors 
+    **kwargs:       kwargs
+                    only here to catch older verions, no functionality given
     Returns:
     -------
     data_batches    list
-                    list of (x_batch, y_batch) pairs
+                    list of (x_batch, y_batch, 'x_extra, y_extra') pairs
+                    if x_extra and y_extra are given
     """
+    ## input preprocessing and variale allocation
+    if x_extra is not None and len( x_extra) == 1:
+        x_extra = x_extra[0]
     n_samples = y.shape[0]
-    if shuffle:
-        permutation = np.random.permutation( n_samples )
-        if numpy is True:
-            x = x[ permutation]
-            y = y[ permutation]
-            if x_extra is not None:
-                x_extra =  x_extra[ permutation]
-            if y_extra is not None:
-                y_extra = y_extra[ permutation]
-        else:
-            x = gather( x, permutation)
-            y = gather( y, permutation)
-            if x_extra is not None:
-                x_extra = gather( x_extra, permutation)
-            if y_extra is not None:
-                y_extra = gather( y_extra, permutation)
-    else:
-        stochastic = 0
     batchsize = int( n_samples // n_batches * (1-stochastic) )
     max_sample = int( n_samples* (1-stochastic) )
     i = -1 #to catch errors for n_batches == 1
     batches = []
+    ## shuffle all samples if asked for
+    if shuffle:
+        permutation = np.random.permutation( n_samples )
+        x = permute( x, permutation)
+        y = permute( y, permutation)
+        if isinstance( x_extra, (list, tuple)):
+          for i in range( len( x_extra) ):
+            x_extra[i] = permute( x_extra[i], permutation)
+        elif x_extra is not None:
+            x_extra =  permute( x_extra, permutation)
+        if y_extra is not None:
+            y_extra = permute( y_extra, permutation)
+    else:
+        stochastic = 0
+
+    ## slice out the batches and put them into lists
     for i in range( n_batches-1):
         current_batch = []
         ii = i*batchsize
         jj = (i+1)*batchsize
         current_batch.extend( ( x[ii:jj], y[ii:jj] ) )
-        if x_extra is not None:
+        if isinstance( x_extra, (list, tuple)):
+          extra_batches = [] 
+          for i in range( len( x_extra) ):
+            extra_batches.append( x_extra[i][ii:jj] )
+          current_batch.extend( extra_batches )
+        elif x_extra is not None:
             current_batch.append( x_extra[ii:jj] )
         if y_extra is not None:
             current_batch.append( y_extra[ii:jj] )
         batches.append( current_batch)
+    ## last batch, take the remaining samples 
     current_batch = []
     current_batch.extend( ( x[ jj:max_sample ], y[jj:max_sample ] ))
-    if x_extra is not None:
+    if isinstance( x_extra, (list, tuple)):
+      extra_batches = [] 
+      for i in range( len( x_extra) ):
+        extra_batches.append( x_extra[i][jj:max_sample] )
+      current_batch.extend( extra_batches )
+    elif x_extra is not None:
         current_batch.append( x_extra[ jj:max_sample ] )
     if y_extra is not None: 
         current_batch.append( y_extra[jj:max_sample ] )
     batches.append( current_batch )
     return batches
+
+def permute( x, permutation):
+    """
+    permute the array x with permutation. Assumes that the data is arranged 
+    row wise. This function is used to permute numpy arrays or tensorflow
+    tensors
+    Parameters:
+    -----------
+    x:              numpy nd-array like
+                    data to be permuted
+    permutation:    indexing object
+                    any indexing object admissible for np or tf arrays
+    Returns:
+    --------
+    x:              numpy nd-array like
+                    basically x[permutation]
+    """
+    if isinstance( permutation, (int, slice) ):
+        return x[permutation]
+    if isinstance( x, np.ndarray):
+        return x[permutation]
+    try: #if tensorflow is imported
+        return tf.gather( x, permutation)
+    except:
+        return np.take( x, permutation, axis=0 )
 
 
 def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=None, shuffle=False ):
@@ -583,4 +619,40 @@ def roll_images( images, part=0.5, shuffle=False):
     if shuffle is False:
         rolled_images = rolled_images[np.argsort( indices)]
     return rolled_images
+
+
+
+
+def slice_args( start, stop, *args):
+    """
+    slice all arguments to the same indices, similar to data batching
+    all args that are not array likes are copied"""
+    try:
+        admissible_dtypes = (tf.tensor, np.ndarray)
+    except:
+        admissible_dtypes = np.ndarray
+    current_args = []
+    for arg in args:
+        if isinstance(arg, admissible_dtypes ):
+            current_args.append( arg[start:stop])
+        else:
+            current_args.append( arg)
+    return current_args 
+
+def slice_kwargs( start, stop, **kwargs):
+    """
+    slice all keyworded arguments to the same indices, similar to data batching
+    all args that are not array likes are copied
+    """
+    try:
+        admissible_dtypes = (tf.tensor, np.ndarray)
+    except:
+        admissible_dtypes = np.ndarray
+    current_kwargs = dict()
+    for key, kwarg in kwargs.items():
+        if isinstance(kwarg, admissible_dtypes ):
+            current_kwargs[key] = kwarg[start:stop]
+        else:
+            current_kwargs[key] = kwarg
+    return current_kwargs
 

@@ -263,7 +263,7 @@ class Loader():
                     restores the saved weights as well as the defined architecture
         """
         try:
-          with open( '{}/model_name.pkl'.format( self.load_path), 'r') as textfile:
+          with open( '{}/model_name.txt'.format( self.load_path), 'r') as textfile:
             model_name = textfile.read()
         except:
           with open( '{}/model_name.pkl'.format( self.load_path), 'rb') as string_file:
@@ -465,7 +465,7 @@ class PartialArchitecture( Loader):
         return model
 
 
-def find_best(  logfile):
+def find_best(  logfile, shared_names=True):
   """
   Find the best model out of multiple models trained for the same output file
   Only works for the current console output of the training where we have
@@ -477,8 +477,10 @@ def find_best(  logfile):
   Disclaimer: this script is pretty garbace since its so case specific, anyways...
   Parameters:
   -----------
-  logfile:    str
-              string to the log file with the specific formatting
+  logfile:      str
+                string to the log file with the specific formatting
+  shared_names: bool, default True
+                if all models share the same base name, if not they are given for each model
   Returns:
   --------
   best_model: list of ints
@@ -494,12 +496,17 @@ def find_best(  logfile):
   x = str( finished_trainings.communicate()[0]) #console output from bytes to single string
   y = x.split( '\\r' )
   interval = 8 #number of lines left after popping lines
+  model_basename = None if shared_names else []
   valid_losses = []
   train_losses = []
   model_nr = []
   isnumber = [str(x) for x in range(10) ] + list( range(10) )
   for j in range( len( y) ):
     if j % interval == 0:
+      if shared_names:
+        model_basename = y[j][18:-2] if model_basename is None else model_basename
+      else:
+        model_basename.append( y[j][18:-2] )
       nr = ''
       for letter in y[j][-5:]:
           if letter in isnumber: 
@@ -516,17 +523,33 @@ def find_best(  logfile):
   best_models = [ valid_losses.index( min(valid_losses)) ]
   best_models.append( combined_losses.index( min(combined_losses)) )
   best_models.append( train_losses.index(min(train_losses)) ) 
-  stoud = """Best models with respect to the given criteria are
-    criteria valid loss, model_nr: {}
-          valid_loss: {:.4e}
-          train_loss: {:.4e}
-    criteria sum losses, model_nr: {}
-          valid_loss: {:.4e}
-          train_loss: {:.4e}
-    criteria train loss, model_nr: {}
-          valid_loss: {:.4e}
-          train_loss: {:.4e}""" 
-  print( stoud.format( model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
-                       model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
-                       model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]] ) )
+  if shared_names:
+      stoud = """Best models with respect to the given criteria are
+        criteria valid loss, model_nr: {}
+              valid_loss: {:.4e}
+              train_loss: {:.4e}
+        criteria sum losses, model_nr: {}
+              valid_loss: {:.4e}
+              train_loss: {:.4e}
+        criteria train loss, model_nr: {}
+              valid_loss: {:.4e}
+              train_loss: {:.4e}
+    Model basename: {:}""" 
+      print( stoud.format( model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
+                           model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
+                           model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]], model_basename ) )
+  else:
+      stoud = """Best models with respect to the given criteria are
+        criteria valid loss, model {} nr {}:
+              valid_loss: {:.4e}
+              train_loss: {:.4e}
+        criteria sum losses, model {} nr {}:
+              valid_loss: {:.4e}
+              train_loss: {:.4e}
+        criteria train loss, model {} nr {}:
+              valid_loss: {:.4e}
+              train_loss: {:.4e}"""
+      print( stoud.format( model_basename[best_models[0]], model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
+                           model_basename[best_models[1]], model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
+                           model_basename[best_models[2]], model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]] ) )
   return [ model_nr[x] for x in best_models] 
