@@ -133,7 +133,8 @@ class VolBypass( Model):
         stopping_delay = n_epochs
     if roll_x0:
         roll_idx = [x.ndim for x in x_train].index( 4) 
-    x_train = list( x_train)
+    x_train = [x_train] if not isinstance( x_train, (list,tuple)) else x_train
+    x_valid = [x_valid] if not isinstance( x_valid, (list,tuple)) and x_valid is not None else x_valid
 
     ## allocation of hardwired default parameters
     roll_interval       = 7 
@@ -261,11 +262,11 @@ class VolBypass( Model):
     return concatenate( prediction, axis=0) 
 
 
-  def predict_vol( self, x, extra_features=None, training=False, *args, **kwargs):
+  def predict_vol( self, x, extra_features=[], training=False, *args, **kwargs):
     """ take the volume fraction out of the feature vector and predict the outputs"""
     x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
-    if extra_features is not None:
-        x = concatenate( [x, extra_features ] )
+    if isinstance( extra_features, (list,tuple)) and len(extra_features) > 0:
+        x = concatenate( [x] + extra_features  )
     for layer in self.vol_part:
         x = layer( x, training=training)
     return x
@@ -294,7 +295,7 @@ class ConvoCombo( VolBypass):
     # above command should also build vol and build regressor
     self.build_extractor()
     #self.build_vol( )
-    self.build_regressor( neurons=[32,32,16,16] ) #now used for convnet regressor
+    #self.build_regressor( neurons=[32,32,16,16] ) #now used for convnet regressor
 
 
   def build_extractor( self, activation='relu'):
@@ -453,7 +454,7 @@ class ConvoCombo( VolBypass):
     """
     if vol is None: 
         vol = tf.reshape( tf.reduce_mean( x, axis=[1,2,3] ), (-1, 1) )
-    x_vol = self.predict_vol( vol, training )
+    x_vol = self.predict_vol( vol, extra_features, training=training )
     x     = self.predict_inception( x, extra_features=extra_features, training=training) 
     return x + x_vol
 
