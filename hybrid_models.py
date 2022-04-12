@@ -295,7 +295,7 @@ class ConvoCombo( VolBypass):
     # above command should also build vol and build regressor
     self.build_extractor()
     #self.build_vol( )
-    #self.build_regressor( neurons=[32,32,16,16] ) #now used for convnet regressor
+    self.build_regressor( neurons=[32,32,16,16] ) 
 
 
   def build_extractor( self, activation='relu'):
