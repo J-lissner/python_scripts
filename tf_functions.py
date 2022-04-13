@@ -49,7 +49,7 @@ def relative_mse( y, y_pred, axis=None):
     y_norm = tf.reduce_sum( tf.square(y), axis=axis )
     error = tf.reduce_sum( tf.square(y-y_pred), axis=axis)
     loss = error/y_norm
-    return loss
+    return loss**0.5
 
 def to_float32( *args, arraytype='numpy'):
     """ convert multiple arrays to float 32, if tensorflow tensors specify the kwarg"""
