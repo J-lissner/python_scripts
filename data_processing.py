@@ -201,7 +201,7 @@ def scale_with_shifts( data, scaling):
     """
     if scaling[2] is None:
         pass
-    elif scaling[2] in [ 'single_std1', 'combined_std1']:
+    elif scaling[2] in [ 'single_std1', 'combined_std1', 'default']:
         data = scaling[1] * ( data - scaling[0] ) 
     elif  'cov' in scaling[2].lower():
         data = (data-scaling[0]) @ np.linalg.inv( scaling[1])
@@ -210,7 +210,7 @@ def scale_with_shifts( data, scaling):
     elif '-1' in scaling[2] and '1' in scaling[2]:
         data = (data - scaling[0]) /scaling[1] *2 -1 
     else:
-        print('Invalid scaletype given in data_processing.scale_data, returning raw data') 
+        print('Invalid scaletype given in data_processing.scale_with_shifts, returning raw data') 
     return data
 
 
