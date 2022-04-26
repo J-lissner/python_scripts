@@ -524,7 +524,7 @@ def find_best(  logfile, shared_names=True):
   best_models.append( combined_losses.index( min(combined_losses)) )
   best_models.append( train_losses.index(min(train_losses)) ) 
   if shared_names:
-      stoud = """Best models with respect to the given criteria are
+      stoud = """Best models out of {} with respect to the given criteria are
         criteria valid loss, model_nr: {}
               valid_loss: {:.4e}
               train_loss: {:.4e}
@@ -535,7 +535,7 @@ def find_best(  logfile, shared_names=True):
               valid_loss: {:.4e}
               train_loss: {:.4e}
     Model basename: {:}""" 
-      print( stoud.format( model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
+      print( stoud.format( model_nr[-1]+1, model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
                            model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
                            model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]], model_basename ) )
   else:

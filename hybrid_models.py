@@ -474,7 +474,7 @@ class DecoupledFeatures( ConvoCombo):
                         whether to use bayesian layers/probability prediction
     """
     super( DecoupledFeatures, self).__init__( n_output, *args, **kwargs)
-    self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
+    #self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
     self.bayesian = bayesian_output
     self.build_feature_regressor()
 

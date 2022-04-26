@@ -138,7 +138,7 @@ class ReconstructedANN( Model):
     paper data driven microstructure property relations (2018)
     """
     def __init__(self, n_output, n_neuron=[6,7], activation=['softplus','softplus'], *args, **kwargs): 
-        super( ReconstructedANN, self).__init__()
+        super( ReconstructedANN, self).__init__( n_output, *args, **kwargs)
         self.architecture = []
         for i in range( len( n_neuron) ):
             self.architecture.append( Dense( n_neuron[i], activation=activation[i] ) )
