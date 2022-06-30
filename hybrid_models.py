@@ -112,8 +112,10 @@ class VolBypass( Model):
     **kwargs with default arguments:
     roll_x0:    bool, default False
                 roll the input data, only makes sense if x_train[i] is images
-    n_epochs:   int, default None
+    n_epochs:   int, default 20000
                 how many epochs to train the model, trains to convergence per default
+    valid_batches:  int, default 1
+                    how many batches to take for the validation set
     Returns:
     --------
     valid_loss: numpy 1d-array
@@ -121,16 +123,12 @@ class VolBypass( Model):
     """
     ## input preprocessing and default kwargs
     roll_x0       = kwargs.pop( 'roll_x0', False)
-    n_epochs      = kwargs.pop( 'n_epochs', None)
-    n_batches     = kwargs.pop( 'n_batches', 40)
+    n_epochs      = kwargs.pop( 'n_epochs', 20000)
+    n_batches     = kwargs.pop( 'n_batches', 30)
     valid_batches = kwargs.pop( 'valid_batches', 1)
+    stopping_delay = kwargs.pop( 'stopping_delay', 50) 
     if predictor is None:
         predictor = self.call
-    if n_epochs is None:
-        n_epochs       = 20000
-        stopping_delay = 50
-    else:
-        stopping_delay = n_epochs
     if roll_x0:
         roll_idx = [x.ndim for x in x_train].index( 4) 
     x_train = [x_train] if not isinstance( x_train, (list,tuple)) else x_train
@@ -166,16 +164,8 @@ class VolBypass( Model):
          optimizer.apply_gradients( zip(gradients, trainable_variables) )
       ## predict the validation data
       if not (x_valid is None and y_valid is None):
-        if valid_batches == 1: #mb i can spare this if
-          y_pred = predictor( *x_valid )
-          valid_loss.append( loss( y_valid, y_pred).numpy() ) 
-        else:
-          batch_loss = []
-          for batch in get.batch_data( x_valid[0], y_valid, n_batches, x_extra=x_valid[1:], numpy=False ):
-            y_batch = batch.pop( 1)
-            y_pred = predictor( *batch )
-            batch_loss.append( loss( y_batch, y_pred ) )
-          valid_loss.append( np.mean( batch_loss) ) 
+        y_pred = self.batched_partial_prediction( valid_batches, predictor, *x_valid )
+        valid_loss.append( loss( y_valid, y_pred).numpy() ) 
         ## epoch post processing
         if valid_loss[-1] < valid_loss[best_epoch]:
           checkpoint_manager.save() 
@@ -475,6 +465,7 @@ class DecoupledFeatures( ConvoCombo):
     """
     super( DecoupledFeatures, self).__init__( n_output, *args, **kwargs)
     #self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
+    self.build_regressor( neurons=[32,32,16,16] ) #is the same as from ConvoCombo but wanna make sure
     self.bayesian = bayesian_output
     self.build_feature_regressor()
 
