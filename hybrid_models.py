@@ -1,6 +1,5 @@
 import tensorflow as tf
 import numpy as np
-import itertools
 from datetime import datetime
 from tensorflow.math import ceil
 from my_models import Model #from tensorflow.keras import Model
@@ -18,9 +17,7 @@ class VolBypass( Model):
   """
   train a model that is linking the volume fraction directly to the
   output layer and taking all other features in a separate Dense model.
-  it is expected to be used as 
-  model.pretrain_vol( *args) #has to be done in main code because of bug
-  model.freeze_vol()
+  This model does contain a few template functions required for hybrid modeling
   """
   def __init__( self, n_output, n_vol=1, *args, **kwargs):
     """
@@ -39,7 +36,7 @@ class VolBypass( Model):
     self.vol_slice     = slice( 0, n_vol)
     self.feature_slice = slice( max(1, n_vol-1), None)
     self.build_vol( )
-    self.build_regressor( )
+    self.build_feature_regressor( )
 
 
   ##### Building of the architecture subblocks ######
@@ -63,29 +60,17 @@ class VolBypass( Model):
     self.vol_part.append( Dense( self.n_output, activation=None ) ) 
 
 
-  def build_regressor(self, neurons=[120,90,50], activation='selu', batch_normalization=True, **architecture_todo): 
-    """
-    build the architecture of the remaining Dense model.
-    Parameters:
-    -----------
-    n_ouptut:   int
-                size of the output layer
-    n_neurons:  list of ints, default [32,32,16,16]
-                how many hidden layers of what size
-    activation: string or list of strings, default 'selu'
-                activation function of the hidden layer, if a list is 
-                given its length has to match 'n_neurons'
-    """
-    if isinstance( activation, str):
-        activation = Cycler( [activation])
-    else:
-        activation = iter( activation) 
-    self.regressor = []
-    for n_neurons in neurons:
-        self.regressor.append( Dense( n_neurons, activation=next(activation)) )
+  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
+    """ dense model which predicts the features derived from the Conv Net """
+    self.feature_regressor = []
+    layers                 = self.feature_regressor
+    layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    for i in range( len( neurons)):
+        layers.append( layer( neurons[i] ) )
         if batch_normalization:
-            self.regressor.append( BatchNormalization() )
-    self.regressor.append( Dense( self.n_output) )
+            layers.append( BatchNormalization() )
+    layers.append( Dense( self.n_output) )
+
 
   ##### pretraining and layer freezing #####
   def pretrain_section( self, x_train, y_train, x_valid=None, y_valid=None,  predictor=None, **kwargs ):
@@ -110,10 +95,10 @@ class VolBypass( Model):
     predictor:  method of self, default self.call
                 method to predict specific parts of the model
     **kwargs with default arguments:
-    roll_x0:    bool, default False
-                roll the input data, only makes sense if x_train[i] is images
-    n_epochs:   int, default 20000
-                how many epochs to train the model, trains to convergence per default
+    roll_images:    bool, default False
+                    roll the input data, only makes sense if x_train[i] is images
+    n_epochs:       int, default 20000
+                    how many epochs to train the model, trains to convergence per default
     valid_batches:  int, default 1
                     how many batches to take for the validation set
     Returns:
@@ -122,20 +107,20 @@ class VolBypass( Model):
                 loss of valid data if given. gives the loss of partial ann
     """
     ## input preprocessing and default kwargs
-    roll_x0       = kwargs.pop( 'roll_x0', False)
-    n_epochs      = kwargs.pop( 'n_epochs', 20000)
-    n_batches     = kwargs.pop( 'n_batches', 30)
-    valid_batches = kwargs.pop( 'valid_batches', 1)
+    roll_images    = kwargs.pop( 'roll_images', False)
+    n_epochs       = kwargs.pop( 'n_epochs', 20000)
+    n_batches      = kwargs.pop( 'n_batches', 30)
+    valid_batches  = kwargs.pop( 'valid_batches', 1)
     stopping_delay = kwargs.pop( 'stopping_delay', 50) 
     if predictor is None:
         predictor = self.call
-    if roll_x0:
+    if roll_images:
         roll_idx = [x.ndim for x in x_train].index( 4) 
     x_train = [x_train] if not isinstance( x_train, (list,tuple)) else x_train
     x_valid = [x_valid] if not isinstance( x_valid, (list,tuple)) and x_valid is not None else x_valid
 
     ## allocation of hardwired default parameters
-    roll_interval       = 7 
+    roll_interval       = 10 
     learning_rate       = 0.05 
     optimizer           = tf.keras.optimizers.Adam( learning_rate=learning_rate) 
     loss                = tf.keras.losses.MeanSquaredError() 
@@ -151,7 +136,7 @@ class VolBypass( Model):
     tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True )
     print( '### starting training for {} ###'.format( predictor.__name__ ) )
     for i in range( n_epochs):
-      if roll_x0 and ((i+1) % roll_interval == 0 ):
+      if roll_images and ((i+1) % roll_interval == 0 ):
           x_train[roll_idx] = get.roll_images( x_train[roll_idx]  )
       ## predict the training data data
       batched_data = get.batch_data( x_train[0], y_train, n_batches, x_extra=x_train[1:] )
@@ -177,44 +162,58 @@ class VolBypass( Model):
       if (i+1) % debug_interval == 0:
           toc( '{}: {} additional epochs'.format( predictor.__name__, debug_interval) )
           print( 'current partial val loss:  {:.6f}  vs best  {:.6f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
-          tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True )
-
+          tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True ) 
     ## restore the best model
     if not (x_valid is None and y_valid is None):
         checkpoint.restore( checkpoint_manager.latest_checkpoint)
     return valid_loss
 
 
-  def freeze_all( self, freeze=True):
-      """ freeze or unfreeze the whole model """
-      freeze_methods = [method for method in dir( self) if 'freeze' in method.lower()]
-      freeze_methods.pop( freeze_methods.index( 'freeze_all') )
-      for method in freeze_methods:
-          method = getattr( self, method)
-          method( freeze)
+  def freeze_feature_predictor( self, freeze=True):
+    """ freeze or unfreeze the feature predictor """
+    for layer in self.feature_regressor:
+        layer.trainable = not freeze
 
-                
+  def all_but_vol( self, freeze=True):
+      """ freeze everything but the volume fraction bypass"""
+      self.freeze_all( freeze)
+      self.freeze_vol()
+
   def freeze_vol( self, freeze=True):
     """ freeze the layers of the volume fraction linking to the output layer"""
     for layer in self.vol_part:
         layer.trainable = not freeze
   
-  def freeze_regressor( self, freeze=True): 
-    for layer in self.regressor:
-        layer.trainable = not freeze
 
 
-  ##### calls and shadows of calls ######
+  ### predictors and calls
+  def predict_vol( self, x, extra_features=[], training=False, *args, **kwargs):
+    """ take the volume fraction out of the feature vector and predict the outputs"""
+    x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
+    if isinstance( extra_features, (list,tuple)) and len(extra_features) > 0:
+        x = concatenate( [x] + extra_features  )
+    for layer in self.vol_part:
+        x = layer( x, training=training)
+    return x
+
+
+  def predict_features( self, x, training=False):
+    """ only predict the part taking all of the features """
+    x = x[:,self.feature_slice]
+    for layer in self.feature_regressor:
+        x = layer( x, training=training)
+    return x
+
+
   def call(self, x, training=False, *args, **kwargs):
     """ call function given a feature vector which has the volume
     fraction in the first dimension, and the remaining features in
     the rest"""
-    x_vol = self.predict_vol( tf.reshape( 
-        x[:,self.vol_slice], (-1, self.vol_slice.stop) ) )
-    x = x[:,self.feature_slice]
-    for layer in self.regressor:
-        x = layer(x)
-    return x + x_vol
+    vol = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) )
+    x_vol = self.predict_vol( vol, training=training )
+    x_fts = self.predict_features( x, training=training)
+    return x_fts + x_vol
+
 
   def batched_partial_prediction( self, n_batches, predictor, *inputs, **kwargs):
     """
@@ -226,7 +225,7 @@ class VolBypass( Model):
     n_batches:  int
                 how many batches to split the input data into
     predictor:  function
-                method of self to give partial predictiohj
+                method of self to give partial prediction
     *inputs:    list of tf.tensor like
                 input data to predict
     **kwargs:   other keyworded options for the call,
@@ -252,26 +251,9 @@ class VolBypass( Model):
     return concatenate( prediction, axis=0) 
 
 
-  def predict_vol( self, x, extra_features=[], training=False, *args, **kwargs):
-    """ take the volume fraction out of the feature vector and predict the outputs"""
-    x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
-    if isinstance( extra_features, (list,tuple)) and len(extra_features) > 0:
-        x = concatenate( [x] + extra_features  )
-    for layer in self.vol_part:
-        x = layer( x, training=training)
-    return x
 
 
-  ## cal shadow functinos
-  def predict( self, x, training=False, *args, **kwargs):
-    """ shadow functions """
-    return self( x, training )
-  def predict_validation( self, x, *args, **kwargs):
-    """ shadow functions """
-    return self( x, training=False )
-
-
-class ConvoCombo( VolBypass):
+class DualInception( VolBypass):
   """
   train a model that is linking the volume fraction directly to the
   output layer and taking the images to train a ConvNet branch
@@ -281,11 +263,35 @@ class ConvoCombo( VolBypass):
   and the hand crafted features
   """
   def __init__( self, n_output, *args, **kwargs):
-    super( ConvoCombo, self).__init__( n_output, *args, **kwargs)
-    # above command should also build vol and build regressor
+    super( DualInception, self).__init__( n_output, *args, **kwargs)
     self.build_extractor()
-    #self.build_vol( )
-    self.build_regressor( neurons=[32,32,16,16] ) 
+    self.build_regressor() 
+    del self.feature_regressor
+    #self.build_vol( ) #(inherited)
+
+  def build_regressor(self, neurons=[32,32,16,16], activation='selu', batch_normalization=True, **architecture_todo): 
+    """
+    build the architecture of the remaining Dense model.
+    Parameters:
+    -----------
+    n_ouptut:   int
+                size of the output layer
+    n_neurons:  list of ints, default [32,32,16,16]
+                how many hidden layers of what size
+    activation: string or list of strings, default 'selu'
+                activation function of the hidden layer, if a list is 
+                given its length has to match <neurons>
+    """
+    if isinstance( activation, str):
+        activation = Cycler( [activation])
+    else:
+        activation = iter( activation) 
+    self.regressor = []
+    for n_neurons in neurons:
+        self.regressor.append( Dense( n_neurons, activation=next(activation)) )
+        if batch_normalization:
+            self.regressor.append( BatchNormalization() )
+    self.regressor.append( Dense( self.n_output) )
 
 
   def build_extractor( self, activation='relu'):
@@ -359,6 +365,9 @@ class ConvoCombo( VolBypass):
     small_pool.append( MaxPool2DPeriodic( pool_size=3) )
     small_pool.append( Flatten())
 
+  def freeze_regressor( self, freeze=True): 
+    for layer in self.regressor:
+        layer.trainable = not freeze
   
   def freeze_inception( self, freeze=True):
       """ freeze the entirety of all inception modules """
@@ -450,65 +459,30 @@ class ConvoCombo( VolBypass):
 
 
 
-class DecoupledFeatures( ConvoCombo):
+class DecoupledFeatures( DualInception):
   """ 
   Build a 3 part model where all the different features are treated
   separately, and no connection between the differently acquired 
   features is present
   """ 
-  def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
-    """
-    Parameters:
-    -----------
-    bayesian_ouptut:    bool, default False #TO BE IMPLEMENTEd
-                        whether to use bayesian layers/probability prediction
-    """
+  def __init__( self, n_output, *args, **kwargs):
+    """ build the three parallel branches with a modified convolution regressor
+    besides that it simply takes all things from super()"""
     super( DecoupledFeatures, self).__init__( n_output, *args, **kwargs)
-    #self.build_regressor( neurons=[ 120, 90, 50])#inherited to build the connection from CNN to output
-    self.build_regressor( neurons=[32,32,16,16] ) #is the same as from ConvoCombo but wanna make sure
-    self.bayesian = bayesian_output
     self.build_feature_regressor()
-
-  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
-    """ dense model which predicts the features derived from the Conv Net """
-    self.feature_regressor = []
-    layers                 = self.feature_regressor
-    if self.bayesian:
-        pass #TODO TO BE IMPLEMENTED 
-    else: 
-        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
-    for i in range( len( neurons)):
-        layers.append( layer( neurons[i] ) )
-        if batch_normalization:
-            layers.append( BatchNormalization() )
-    layers.append( Dense( self.n_output) )
-
-  def freeze_feature_predictor( self, freeze=True):
-    """ freeze or unfreeze the feature predictor """
-    for layer in self.feature_regressor:
-        layer.trainable = not freeze
-
-
-  def predict_features( self, x, training=False):
-    """ only predict the part taking all of the features """
-    x = x[:,self.feature_slice]
-    for layer in self.feature_regressor:
-        x = layer( x, training=training)
-    return x
-
 
   def call( self, features, images, extra_features=[], training=False):
     """
-    Predict the full model wit hall subparts
+    Predict the full model with all subparts
     If variable contrast is trained (i.e. vol slice.stop >1 then the phase contrast
     is automatically passed as extra features for the inception part
     """
-    # predict the volume fraction, features
-    x_vol      = self.predict_vol( features, training=training)
-    x_features = self.predict_features( features, training=training)
-    # predict cnn
     if not extra_features and self.vol_slice.stop == 2:
         extra_features = [ tf.reshape( features[:,1], (-1,1) ) ]
+    # predict the volume fraction, features
+    x_vol      = self.predict_vol( features, extra_features, training=training)
+    x_features = self.predict_features( features, training=training)
+    # predict cnn
     x_cnn = self.extract_features( images, extra_features=extra_features, training=training )
     # prediction of the regressor of the cnn features
     for layer in self.regressor:
@@ -528,37 +502,6 @@ class VariableContrast( DecoupledFeatures):
       self.extra_layers.append( BatchNormalization() )
       self.extra_layers.append( Dense( self.n_output) )
   
-  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
-    self.feature_regressor = []
-    layers                 = self.feature_regressor
-    layer                  = lambda n_neuron: Dense( n_neuron, activation=activation) 
-    for i in range( len( neurons)):
-        if batch_normalization and i > 0:
-            layers.append( BatchNormalization() )
-        layers.append( layer( neurons[i] ) )
-
-  def build_regressor(self, neurons=[120,90,50], activation='selu', batch_normalization=True, **architecture_todo): 
-    """
-    build the architecture of the remaining Dense model.
-    Parameters:
-    -----------
-    n_ouptut:   int
-                size of the output layer
-    n_neurons:  list of ints, default [32,32,16,16]
-                how many hidden layers of what size
-    activation: string or list of strings, default 'selu'
-                activation function of the hidden layer, if a list is 
-                given its length has to match 'n_neurons'
-    """
-    if isinstance( activation, str):
-        activation = Cycler( [activation])
-    else:
-        activation = iter( activation) 
-    self.regressor = []
-    for i in range( len( neurons)):
-        if batch_normalization and i > 0:
-            self.regressor.append( BatchNormalization() )
-        self.regressor.append( Dense( neurons[i], activation=next(activation)) )
 
   def call( self, features, images, extra_features, training=False):
     """
@@ -586,16 +529,11 @@ class FullCombination( DecoupledFeatures ):
   sized dense model from the scalar features, small-ish dense from the 
   convolutional features, as well as a model combining all higher
   level features """
-  def __init__( self, n_output, bayesian_output=False, *args, **kwargs):
-    """
-    Parameters:
-    -----------
-    bayesian_ouptut:    bool, default False #TO BE IMPLEMENTEd
-                        whether to use bayesian layers/probability prediction
-    """
+  def __init__( self, n_output, *args, **kwargs):
+    """ Build the same as from inherited, except for an auxiliary connector
+    between features and convolutional features """
     super( FullCombination, self).__init__( n_output, *args, **kwargs)
     self.build_regressor( )#inherited to build the connection from CNN to output
-    self.bayesian = bayesian_output
     self.build_connector() #the remaining build functions are inherited
 
 
@@ -604,10 +542,7 @@ class FullCombination( DecoupledFeatures ):
     convolutional branch """
     self.connector = []
     layers         = self.connector
-    if self.bayesian:
-        pass #TODO TO BE IMPLEMENTED 
-    else: 
-        layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
     for i in range( len( neurons)):
         layers.append( layer( neurons[i] ) )
         if batch_normalization:

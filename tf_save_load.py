@@ -272,21 +272,31 @@ class Loader():
         model_code = model_code.replace('/','.') 
         model_code = getattr( import_module( model_code), model_name) 
 
+        args = self.get_args()
+        kwargs = self.get_kwargs()
+        model = model_code( *args, **kwargs)
+        model.load_weights( '{}/weights/'.format( self.load_path) )
+        return model
+    
+    def get_args( self):
+        """ return the args given for model initialization """
         try:
             with open( '{}/init_args.pkl'.format( self.load_path), 'rb') as pklfile:
                 args = pickle.load( pklfile)
         except: 
             args = []
             print( 'no "init_args" found in the saved folder, contuniong without loading any') 
+        return args
+    
+    def get_kwargs( self):
+        """ return the kwargs given for model initialization """
         try:
             with open( '{}/init_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
                 kwargs = pickle.load( pklfile)
         except: 
             kwargs = {}
             print( 'no "init_kwargs" found in the saved folder, contuniong without loading any') 
-        model = model_code( *args, **kwargs)
-        model.load_weights( '{}/weights/'.format( self.load_path) )
-        return model
+        return kwargs
 
 
     def scaling(self ):

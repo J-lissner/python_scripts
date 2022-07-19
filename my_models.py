@@ -7,67 +7,85 @@ from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, concaten
 from data_processing import slice_args, slice_kwargs
 
 
-# overwrite the model to get default behavious
+# overwrite the model to get default behaviour
 class Model( Model):
-    """
-    This is used to implement the generic methods like
-    call, predict, predict_validation
-    and inherit them, that I have less copied lines of code
-    """
-    def __init__( self, n_output, *args, **kwargs):
-        super( Model, self).__init__()
-        self.n_output = n_output
-        self.architecture = []
-
-    def call(self, x, training=False, *args, **kwargs):
-        for layer in self.architecture:
-            x = layer( x, training=training)
-        return x
-    
-    def batched_prediction( self, n_batches, *inputs, **kwargs):
-        """
-        predict the given data in batches and return the prediction
-        takes variable inputs because this method is inherited to more
-        complicated models.
-        Parameters:
-        -----------
-        n_batches:  int
-                    how many batches to split the input data into
-        *inputs:    list of tf.tensor like
-                    input data to predict
-        **kwargs:   other keyworded options for the call,
-                    also takes input data
-        Returns:
-        --------
-        prediction: tensorflow.tensor
-                    prediction of the model when using self.call()
-        """
-        if n_batches == 1:
-            return self( *inputs, **kwargs)
-        prediction = []
-        n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
-        for i in range( n_batches-1):
-            ii = i* n_samples//n_batches
-            jj = (i+1)* n_samples//n_batches
-            sliced_args = slice_args( ii, jj, *inputs)
-            sliced_kwargs = slice_kwargs( ii, jj, **kwargs) 
-            prediction.append( self( *sliced_args, **sliced_kwargs ) )
-        sliced_args = slice_args( jj, None, *inputs)
-        sliced_kwargs = slice_kwargs( jj, None, **kwargs) 
-        prediction.append( self( *sliced_args, **sliced_kwargs ) )
-        return concatenate( prediction, axis=0) 
+  """
+  This is used to implement the generic methods like call, batched_prediction, etc.
+  This class should be only inherited and can not be used as standalone
+  """
+  def __init__( self, n_output, *args, **kwargs):
+      """
+      Parameters:
+      -----------
+      n_output:     int
+                    how many values to predict
+      """
+      super( Model, self).__init__()
+      self.n_output = n_output
+      self.architecture = []
 
 
-    def freeze( self, freeze=True):
-        """ freeze the generic model which is given in any default ann"""
-        for layer in self.architecture:
-            layer.trainable = not freeze
+  def batched_prediction( self, n_batches, *inputs, **kwargs):
+      """
+      predict the given data in batches and return the prediction
+      takes variable inputs because this method is inherited to more
+      complicated models.
+      Parameters:
+      -----------
+      n_batches:  int
+                  how many batches to split the input data into
+      *inputs:    list of tf.tensor like
+                  input data to predict
+      **kwargs:   other keyworded options for the call,
+                  also takes input data
+      Returns:
+      --------
+      prediction: tensorflow.tensor
+                  prediction of the model when using self.call()
+      """
+      if n_batches == 1:
+          return self( *inputs, **kwargs)
+      prediction = []
+      n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
+      for i in range( n_batches-1):
+          ii = i* n_samples//n_batches
+          jj = (i+1)* n_samples//n_batches
+          sliced_args = get.slice_args( ii, jj, *inputs)
+          sliced_kwargs = get.slice_kwargs( ii, jj, **kwargs) 
+          prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      sliced_args = get.slice_args( jj, None, *inputs)
+      sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
+      prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      return concatenate( prediction, axis=0) 
 
-    def predict( self, x):
-        return self( x, training=False )
 
-    def predict_validation( self, x):
-        return self( x, training=False )
+  def freeze( self, freeze=True):
+      """ freeze the generic model which is given in any default ann"""
+      for layer in self.architecture:
+          layer.trainable = not freeze
+
+  def freeze_all( self, freeze=True):
+      """ 
+      freeze or unfreeze the whole model by calling upon every method
+      that contains the word 'freeze'
+      """
+      freeze_methods = [method for method in dir( self) if 'freeze' in method.lower()]
+      freeze_methods.pop( freeze_methods.index( 'freeze_all') )
+      for method in freeze_methods:
+          method = getattr( self, method)
+          method( freeze)
+
+  ## call and shadows of call
+  def call(self, x, training=False, *args, **kwargs):
+      for layer in self.architecture:
+          x = layer( x, training=training)
+      return x
+
+  def predict( self, x):
+      return self( x, training=False )
+
+  def predict_validation( self, x):
+      return self( x, training=False )
 
 
 

@@ -83,6 +83,8 @@ def correlation_function( images, fourier=False, resolution=None):
                 if more than one image was given they are arranged column wise (each column one pcf) 
     """
     ## preallocation and default parameters
+    if images.ndim > 2:
+        images = images.reshape( 400**2, -1)
     dim, n_s = images.shape
     if dim < n_s:
         print( 'Transposing the images to arrange them column wise (non tensorflow conform)' )

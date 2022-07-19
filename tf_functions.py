@@ -51,8 +51,21 @@ def relative_mse( y, y_pred, axis=None):
     loss = error/y_norm
     return loss**0.5
 
+
 def to_float32( *args, arraytype='numpy'):
-    """ convert multiple arrays to float 32, if tensorflow tensors specify the kwarg"""
+    """ 
+    convert multiple arrays to float 32, mainly used to suppress warnings
+    Parameters:
+    -----------
+    *args:      unspecified amount of tf.tensors or numpy.nd-arrays
+                all must share the same package-type
+    arraytype:  str, default 'numpy'
+                choose between 'numpy' and 'tf/tensorflow'
+                what datastructure you are feeding, i.e. which array structure 
+    Returns:
+    --------
+    *args_converted:    all tensors/arrays converted to float32 values.
+    """
     return_values = []
     for arg in args:
       if arraytype == 'numpy':

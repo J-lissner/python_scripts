@@ -625,8 +625,21 @@ def roll_images( images, part=0.5, shuffle=False):
 
 def slice_args( start, stop, *args):
     """
-    slice all arguments to the same indices, similar to data batching
-    all args that are not array likes are copied"""
+    Slices all args to the same indices given in <start> and <stop>. Only
+    slices numpy-ndarrays and tensorflow.tensors, if other datatypes are 
+    given they are returned as passed.
+    Parameters:
+    -----------
+    start:  int
+            starting index used for slicing
+    stop:   int
+            end index used for slicing
+    *args:  unspecified amount of (preferably) array-likes.
+    Returns:
+    --------
+    *sliced_args:   tuple of sliced args
+                    does copy the sliced arrays into memory 
+    """
     try:
         admissible_dtypes = (tf.tensor, np.ndarray)
     except:
@@ -641,8 +654,21 @@ def slice_args( start, stop, *args):
 
 def slice_kwargs( start, stop, **kwargs):
     """
-    slice all keyworded arguments to the same indices, similar to data batching
-    all args that are not array likes are copied
+    Slices all kwargs to the same indices given in <start> and <stop>. Only
+    slices numpy-ndarrays and tensorflow.tensors, if other datatypes are 
+    given they are returned as given.
+    Parameters:
+    -----------
+    start:      int
+                starting index used for slicing
+    stop:       int
+                end index used for slicing
+    **kwargs:   unspecified amount of key - (preferably) array-likes paires
+    Returns:
+    --------
+    **sliced_kargs: dict of sliced kwargs
+                    does copy the sliced arrays into memory, keeps
+                    the key-value pairs
     """
     try:
         admissible_dtypes = (tf.tensor, np.ndarray)
