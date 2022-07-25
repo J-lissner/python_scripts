@@ -82,19 +82,21 @@ def evaluation( x, y, model, loss_object, **model_kwargs):
     return y_pred, loss
 
 
+## the tf.function decorator might has to yeet away, if not using inplace
 @tf.function
-def roll_images( images, part=0.5, shuffle=False):
+def roll_images( images, part=0.5):
     """
     Given periodic images of shape (n_samples, n_1, n_2, n_channels)
     randomly roll the <part> in x and y direction.
-    Changes the image in place, returns None
+    Changes the image in place, returns the images if shuffle is on,
+    else only inplace
     Intended use: data augmentation for periodic image data. Use this 
     function while training to have virtually infinite training samples
     (though the feature span of the training samples does not increase
     due to this procedure)
     Parameters:
     -----------
-    images:     tensorflow.tensor
+    images:     tensorflow.Variable
                 image data of shape (n_samples, n_1, n_2, n_channels)
     part:       float, default 0.5
                 what proportion of the randomly selected images should
@@ -110,19 +112,14 @@ def roll_images( images, part=0.5, shuffle=False):
     n_roll = int( n_images*part )
     img_dim = images.shape[1:3]
     max_roll = min( img_dim)
-    indices = tf.random.shuffle( tf.range( n_images, dtype=tf.int32) ) 
+    indices = tf.random.shuffle( tf.range( n_images, dtype=tf.int32) )[:n_roll]
     roll = tf.random.uniform( shape=(n_roll, len(img_dim) ), minval=0, maxval=max_roll, dtype=tf.int32 )
-    rolled_images = []
-    for i in range( n_roll):
-        rolled_images.append( tf.roll( images[indices[i]], roll[i], axis=[0,1] )) 
-    for i in range( n_roll, n_images):
-        rolled_images.append( images[indices[i] ] )
-    del images
-    images = tf.stack( rolled_images)
-    del rolled_images
-    if shuffle is False:
-        images = tf.gather( images, tf.argsort( indices))
-    return images
+    tf.debugging.Assert(isinstance( images,  tf.Variable), ['roll_images needs tf.Variable(images)'] ) 
+    j = 0
+    for i in indices:
+        images[i].assign( tf.roll( images[i], roll[j], axis=[0,1] ) )
+        j+= 1
+
 
 ## Generators cannot be tf.function s, it significantly slows down training....
 def batch_data( x, y, n_batches, shuffle=True):

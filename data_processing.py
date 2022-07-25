@@ -431,18 +431,42 @@ def permute( x, permutation):
         return np.take( x, permutation, axis=0 )
 
 
+def rotate_images( images, kappa):
+    """
+    Rotates all the given images to flip the diagonal components of
+    kappa and change the sign of the offdiagonal component
+    Parameters:
+    -----------
+    images:     numpy nd-array like
+                images of shape (n_samples, n_x, n_y )
+    kappa:      numpy nd-array like
+                target values of shape (n_samples, 3), given in mandel notation
+    Returns:
+    --------
+    images:     numpy nd-array like
+                previous images rotated 90 degree counter clockwise
+    kappa:      numpy nd-array like
+                corresponding target values 
+    """
+    kappa = kappa.copy()
+    kappa[:,[0,1]] = kappa[:,[1,0]]
+    kappa[:,-1] *= -1
+    images = np.rot90( images, axes=(1,2) )
+    return images, kappa
+
+
 def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=None, shuffle=False ):
     """
     Augment the periodic image data by rolling some images randomly.
     Augments by n_samples*augmentation and rolls the same images multiple
     times if specified by multi roll, i.e. default arguments take 1/4 of 
     the images for augmentation.  Does not match the number of samples 
-    exactly, i.e. n_samples % multi_roll > 0 then the few augmented 
+    exactly, i.e. n_samples % multi_roll >= 0 then the few augmented 
     samples are just not added.
     Parameters:
     -----------
     images:         numpy nd-array
-                    images of shape (n_samples x 'res x olu x tion' x n_channels )
+                    images of shape (n_samples, 'res,olu,tion', n_channels )
     y:              numpy nd-array
                     target value to copy due to augmentation
     augmentation:   float, default 0.5
@@ -582,7 +606,7 @@ def compute_error( true_value, predictions, scaling=None, convertScale=False, me
         error = np.square(np.subtract(true_value, predictions)).mean() 
     return error
 
-def roll_images( images, part=0.5, shuffle=False):
+def roll_images( images, part=0.5, shuffle=False, inplace=True):
     """
     ## Note that this function is executed on the CPU with numpy. In 
     tf_functions there exists an identical function which is gpu compatible##
@@ -601,6 +625,8 @@ def roll_images( images, part=0.5, shuffle=False):
                 be rolled
     shuffle:    bool, default False
                 if the data should be shuffled during rolling
+    inplace:    bool, default True
+                if the images should changed in place or a new array allocated
     Returns:
     --------
     images:     tensorflow.tensor
@@ -612,13 +638,21 @@ def roll_images( images, part=0.5, shuffle=False):
     max_roll = min( img_dim)
     indices = np.random.permutation( n_images )
     roll = np.random.randint( 0, max_roll, size=(n_roll, len(img_dim) ))
-    rolled_images = np.zeros( images.shape)
-    for i in range( n_roll):
-        rolled_images[i] = np.roll( images[indices[i]], roll[i], axis=[0,1] ) 
-    rolled_images[n_roll:] = images[indices[n_roll:] ]
-    if shuffle is False:
-        rolled_images = rolled_images[np.argsort( indices)]
-    return rolled_images
+    if not inplace:
+        rolled_images = np.zeros( images.shape)
+        for i in range( n_roll):
+            rolled_images[i] = np.roll( images[indices[i]], roll[i], axis=[0,1] ) 
+        rolled_images[n_roll:] = images[indices[n_roll:] ]
+        if shuffle is False:
+            rolled_images = rolled_images[np.argsort( indices)]
+        return rolled_images
+    else:
+        for i, j in zip( indices[:n_roll], range(n_roll) ):
+            images[i] = np.roll( images[i], roll[j], axis=[0,1] ) 
+        if shuffle:
+            images[:] = images[indices] 
+        return images
+
 
 
 
