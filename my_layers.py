@@ -1,5 +1,3 @@
-# includes
-
 from tensorflow.keras.layers import Conv2D, Concatenate, concatenate, AveragePooling2D, MaxPool2D
 from tensorflow.keras.layers import BatchNormalization, Dense
 from tensorflow.python.ops import nn, nn_ops
@@ -8,28 +6,50 @@ def pad_periodic( kernel_size, data):
     """
     Pad a given tensor of shape (n_batch, n_row, n_col, n_channels) 
     periodically by kernel_size//2
+    Parameters:
+    -----------
+    kernel_size:    list of ints or int
+                    size of the (quadratic) kernel
+    data:           tensorflow.tensor
+                    image data of at least 3 channels, n_sample x n_x x n_y
+    Returns:
+    --------
+    padded_data:    tensorflow.tensor
+                    the padded data by the minimum required width
     """
+    ## for now i assume that on even sized kernels the result is in the top left
     if isinstance( kernel_size, int):
-        pad_w = (kernel_size )//2 
-        pad_h = pad_w
+        pad_l = kernel_size//2 #left
+        pad_u = kernel_size//2 #up
+        pad_r = pad_l - 1 if (kernel_size %2) == 0 else pad_l #right
+        pad_b = pad_u - 1 if (kernel_size %2) == 0 else pad_u #bot
     else: 
-        pad_w = (kernel_size[1] )//2 
-        pad_h = (kernel_size[0] )//2
-    top_pad = concatenate( [data[:,-pad_w:, -pad_h:], data[:,-pad_w:,:], data[:,-pad_w:, :pad_h] ], axis=2 )
-    bot_pad = concatenate( [data[:,:pad_w, -pad_h:], data[:,:pad_w,:], data[:,:pad_w, :pad_h] ], axis=2 )
-    data = concatenate( [data[:,:,-pad_h:], data, data[:,:,:pad_h] ], axis=2 )
-    return concatenate( [top_pad, data, bot_pad], axis=1 )
+        pad_l = (kernel_size[1] )//2  #left
+        pad_u = (kernel_size[0] )//2 #bot
+        pad_r = pad_l - 1 if (kernel_size[1] %2) == 0 else pad_l #right
+        pad_b = pad_u - 1 if (kernel_size[0] %2) == 0 else pad_u #bot
+    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
+    ## there might be a bug with 'left right' padding in even kernels, gotta check, i REALLY need to check the evaluation
+    if pad_r == 0:
+        top_pad = []
+    else:
+        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
+    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
+    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
+    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
+    return data
 
 
 class Conv2DPeriodic( Conv2D):
     """
-    shadows the Conv2D layer from keras and implements a periodic padding
-    on runtime in each layer.
+    shadows the Conv2D layer from keras and implements a 
+    periodic padding on runtime in each layer. All parameters except
+    the listed ones below are directly passed to the Conv2D layer and
+    follow default behaviour
     Changed parameters:
     padding:    string, default same_periodic
                 Padding such that the layer output either stays the same
-                or is reduced (option 'valid'). Allows for same_x and
-                same_y for only one directional periodicity. #TO BE IMPLEMENTED
+                or is reduced (option 'valid').
                 Note that 'same' is equivalent to 'same_periodic'. This layer
                 does not allow 0 padding
                 Also note that padding has to be set by kwargs, not by args
@@ -58,13 +78,14 @@ class Conv2DPeriodic( Conv2D):
 
 class AvgPool2DPeriodic( AveragePooling2D):
     """
-    shadows the AveragePooling2D layer from keras and implements a periodic padding
-    on runtime in each layer.
+    shadows the AveragePooling2D layer from keras and implements a 
+    periodic padding on runtime in each layer. All parameters except 
+    the listed ones below are directly passed to the Conv2D layer and 
+    follow default behaviour
     Changed parameters:
     padding:    string, default same_periodic
                 Padding such that the layer output either stays the same
-                or is reduced (option 'valid'). Allows for same_x and
-                same_y for only one directional periodicity. #TO BE IMPLEMENTED
+                or is reduced (option 'valid').
                 Note that 'same' is equivalent to 'same_periodic'. This layer
                 does not allow 0 padding
                 Also note that padding has to be set by kwargs, not by args
@@ -93,13 +114,14 @@ class AvgPool2DPeriodic( AveragePooling2D):
 
 class MaxPool2DPeriodic( MaxPool2D):
     """
-    shadows the MaxPool2D layer from keras and implements a periodic padding
-    on runtime in each layer.
+    shadows the MaxPool2D layer from keras and implements a 
+    periodic padding on runtime in each layer. All parameters except 
+    the listed ones below are directly passed to the Conv2D layer and 
+    follow default behaviour
     Changed parameters:
     padding:    string, default same_periodic
                 Padding such that the layer output either stays the same
-                or is reduced (option 'valid'). Allows for same_x and
-                same_y for only one directional periodicity. #TO BE IMPLEMENTED
+                or is reduced (option 'valid').
                 Note that 'same' is equivalent to 'same_periodic'. This layer
                 does not allow 0 padding
                 Also note that padding has to be set by kwargs, not by args

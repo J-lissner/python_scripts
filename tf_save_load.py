@@ -10,7 +10,7 @@ from importlib import import_module
 from zipfile import ZipFile
 
 """
-Disclaimer - this seems very buggy with the sypder editor 
+DISCLAIMER - this seems very buggy with the sypder editor  as of ~start 2021
 (because spyder has troubles reloading hand written objects (memory is flooded for some reason))
 ( This is due to the fact of interactive debugging - where reloading and "version check" of active modules slows it down alot)
 To circumvent the spyder problem, launch python from the terminal
@@ -135,8 +135,19 @@ class Saver():
 
 
     def scaling(self, input_scaling, output_scaling, **scalings):
-        #TODO add another set of 'manual scaling' given as functions with inverse scaling requirement
-        # then simply call these on the input when they are put LAST (to scale) on the data
+        """
+        dump the scaling by specified name. Takes per default input and 
+        output scaling. The scalings are preferably taken from the script
+        'data_processing'
+        Parameters:
+        -----------
+        input_scaling:  data_scaling, default None
+                        defaults to 3*[None] which is no scaling in 'data_processing'
+        output_scaling: data_scaling, default None
+                        defaults to 3*[None] which is no scaling in 'data_processing'
+        **scalings:     unspecified kwargs
+                        auxiliary scalings which can be stored
+        """
         scalings = dict( input=input_scaling, output=output_scaling, **scalings)
         with open( '{}/scalings.pkl'.format( self.savepath), 'wb') as pklfile:
             pickle.dump( scalings, pklfile)
@@ -179,7 +190,7 @@ class Saver():
                 print( 'file "{}" not found locally, but was found and taken from default script path'.format( code ) )
                 codefile.write( self.script_path + code )
             else:
-                print( 'WARNING: Following script to save has not been found: {}\n , might lead to issues on trying to reload the model'.format( code) )
+                print( 'WARNING: Following script to save has not been found: {}\n , might lead to issues when trying to reload the model'.format( code) )
         codefile.close()
 
 

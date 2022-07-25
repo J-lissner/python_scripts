@@ -34,7 +34,7 @@ class VolBypass( Model):
     self.n_output      = n_output
     self.n_vol         = n_vol
     self.vol_slice     = slice( 0, n_vol)
-    self.feature_slice = slice( max(1, n_vol-1), None)
+    self.feature_slice = slice( min(1, n_vol), None) #everything but the volume fraction
     self.build_vol( )
     self.build_feature_regressor( )
 
@@ -478,12 +478,12 @@ class DecoupledFeatures( DualInception):
     is automatically passed as extra features for the inception part
     """
     if not extra_features and self.vol_slice.stop == 2:
-        extra_features = [ tf.reshape( features[:,1], (-1,1) ) ]
+        phase_contrast = [ tf.reshape( features[:,1], (-1,1) ) ]
     # predict the volume fraction, features
     x_vol      = self.predict_vol( features, extra_features, training=training)
     x_features = self.predict_features( features, training=training)
     # predict cnn
-    x_cnn = self.extract_features( images, extra_features=extra_features, training=training )
+    x_cnn = self.extract_features( images, extra_features=phase_contrast, training=training )
     # prediction of the regressor of the cnn features
     for layer in self.regressor:
         x_cnn = layer( x_cnn, training=training) 
