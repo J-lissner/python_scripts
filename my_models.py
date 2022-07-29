@@ -77,8 +77,16 @@ class Model( Model):
 
   ## call and shadows of call
   def call(self, x, training=False, *args, **kwargs):
+      if training is False:
+        if False: #TODO: implement the scaling when not training, seems real nice
+          x = get.scale_with_shifts( x, self.input_scaling )
+          #and then below
+          x = get.unscale_data( x, self.output_scaling) 
       for layer in self.architecture:
           x = layer( x, training=training)
+    
+      if training is False:
+          x = get.unscale_data( x, self.output_scaling) 
       return x
 
   def predict( self, x):

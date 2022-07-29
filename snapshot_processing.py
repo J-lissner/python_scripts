@@ -149,11 +149,13 @@ def process_snapshots( snapshots, fourier_space=False, scaletype='fscale'):
                     volume fraction of the inclusion phase 
     """
     vol_2 = snapshots[0,:] 
+    ## zero mean
     if fourier_space is True:
         vol_2          = np.sqrt( vol_2 )
-        snapshots[0,:] = 0 #zero mean snapshot
+        snapshots[0,:] = 0 
     else:
-        snapshots = snapshots - vol_2**2 #zero mean
+        snapshots = snapshots - vol_2**2 
+    ## rescaling
     if scaletype == 'max1': #every corner has value 1
         snapshots = snapshots/ ( vol_2 -vol_2**2 )
     elif scaletype == 'fscale': #take out the volume fraction

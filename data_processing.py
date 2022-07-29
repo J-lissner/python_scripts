@@ -31,11 +31,11 @@ def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, sla
     """
     # It is assumed that there is more data provided than dimension of the input/output 
     # Hence, transpose the data if it is arranged "column wise"
-    if inputs.shape[0] < inputs.shape[1]:
+    if inputs.shape[0] < inputs.shape[1] and inputs.ndim < 3:
         print( 'Transposing inputs before splitting and shuffling such that each row is one data-sample')
         print( '...returning row wise aranged inputs')
         inputs = inputs.T
-    if outputs.shape[0] < outputs.shape[1]:
+    if outputs.shape[0] < outputs.shape[1] and outputs.ndim < 3:
         print( 'Transposing outputs before splitting and shuffling such that each row is one data-sample')
         print( '...returning row wise aranged outputs')
         outputs = outputs.T

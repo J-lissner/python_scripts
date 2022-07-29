@@ -72,7 +72,10 @@ def to_float32( *args, arraytype='numpy'):
         return_values.append( arg.astype( np.float32) )
       elif arraytype in ['tf', 'tensorflow']:
         return_values.append( tf.cast( arg, tf.float32) )
-    return return_values
+    if len( return_values) == 1:
+        return return_values[0]
+    else:
+        return return_values
 
 
 def evaluation( x, y, model, loss_object, **model_kwargs):
@@ -84,7 +87,7 @@ def evaluation( x, y, model, loss_object, **model_kwargs):
 
 ## the tf.function decorator might has to yeet away, if not using inplace
 @tf.function
-def roll_images( images, part=0.5):
+def roll_images( images, part=0.5, slave_images=None):
     """
     Given periodic images of shape (n_samples, n_1, n_2, n_channels)
     randomly roll the <part> in x and y direction.
@@ -103,6 +106,8 @@ def roll_images( images, part=0.5):
                 be rolled
     shuffle:    bool, default False
                 if the data should be shuffled during rolling
+    slave_images: tensorflow.Variable, default None
+                has to be a variable, similar to images
     Returns:
     --------
     images:     tensorflow.tensor
@@ -118,6 +123,8 @@ def roll_images( images, part=0.5):
     j = 0
     for i in indices:
         images[i].assign( tf.roll( images[i], roll[j], axis=[0,1] ) )
+        if slave_images is not None:
+            slave_images[i].assign( tf.roll( slave_images[i], roll[j], axis=[0,1] ) )
         j+= 1
 
 
