@@ -37,6 +37,7 @@ class DoubleUNet(Model):
     self.up_path = []
     self.concatenators = []
     self.upsamplers = []
+    self.level_predictors = []
     ## direct path down
     down_layers = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, strides=2, activation='selu' )
     up_layers = lambda n_channels, kernel_size: Conv2DTranspose( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same' )
@@ -61,6 +62,9 @@ class DoubleUNet(Model):
         self.upsamplers.append( [[up_layers( (i)*channel_per_down, 3),up_layers( (i)*channel_per_down, 5)]] )
         self.upsamplers[-1].append( Concatenate() )
         self.upsamplers[-1].append( conv_1x1( i*channel_per_down ) ) 
+        ## side out pass on each level for loss prediction
+        self.level_predictors.append( [ Concatenate()] )
+        self.level_predictors[-1].append( conv_1x1( channels_out ) )
     self.build_predictor( channels_out)
   
 
@@ -92,6 +96,7 @@ class DoubleUNet(Model):
     return levels
 
   def go_up( self, levels, training=False):
+    multistage_predictions = [] #used during training
     previous_channels = []
     for i in range( self.depth ):
       coarse_grained = self.up_path[i][0](levels[0] )  #original image
@@ -115,8 +120,16 @@ class DoubleUNet(Model):
           else:
               layer_channels = layer( layer_channels, training=training )
       previous_channels = [layer_channels]  #needed as list for concatenation
+      if training:
+          multistage_predictions.append( self.level_predictors[i][0](previous_channels) )
+          for layer in self.level_predictors[i][1:]:
+            multistage_predictions[-1] = ( layer(multistage_predictions[-1]) )
       del coarse_grained, layer_channels
-    return previous_channels
+    if training:
+        multistage_predictions.append( previous_channels )
+        return multistage_predictions
+    else:
+        return previous_channels
 
 
   def predict( self, images, feature_channels, training=False):
@@ -133,10 +146,37 @@ class DoubleUNet(Model):
             prediction = layer( prediction, training=training) 
     return prediction
 
-  def call( self, images, training=False, *args, **kwargs):
+
+  def call( self, images, training=False, multisage_losses=False, *args, **kwargs):
+    """
+    Predict the given images by the double U-net. The first down pass
+    needs to be stored in memory, the up pass tries to parallelize as
+    many tensor handlings as possible to consider memory limitations.
+    After going up the model does give its final prediction with the
+    input image.
+    Parameters:
+    -----------
+    images:     tensorflow.tensor like
+                image data to predict
+    training:   bool, default False
+                if the model is trained currently
+    multistage_losses:  bool, default False
+                whether to give return prediction on each level of 
+                upsampling. CAREFUL: Requires the 'training' to be not
+                false, i.e. True or None.
+    Returns:
+    --------
+    prediction: tensorflow.tensor or list of tf.tensors
+                image data prediction of original resolution with
+                self.n_output channels, or a list of predictions when
+                multistage losses is set true.
+    """
     predictions = self.go_down( images, training=training)
     predictions = self.go_up( predictions, training=training)
-    predictions = self.predict( images, predictions, training=training )
+    if training:
+        predictions[-1] = self.predict( images, predictions[-1], training=training ) 
+    else:
+        predictions = self.predict( images, predictions, training=training )
     return predictions
       
 
