@@ -1,5 +1,6 @@
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
+import tensorflow_addons as tfa
 from datetime import datetime
 from tensorflow.math import ceil
 #from my_models import Model 
@@ -27,6 +28,7 @@ class DoubleUNet(Model):
     ## -> and the averagepool + 5x5 only when i am at current layer
     ## for now i will assume that the average pooling is a free gift and i do not need
     ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
+  ### model building functions
   def __init__( self, channels_out, n_levels=4, *args, **kwargs):
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
@@ -39,67 +41,93 @@ class DoubleUNet(Model):
     self.check_layer = lambda x: isinstance( x, tf.keras.layers.Layer )
     self.check_iter = lambda x: hasattr( x, '__iter__')
     ## direct path down
-    down_layers = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, strides=2, activation='selu' )
-    up_layers = lambda n_channels, kernel_size: Conv2DTranspose( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same' )
-    conv_1x1 = lambda n_channels: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu' )
+    down_layers = lambda n_channels, kernel_size=3, **kwargs: Conv2DPeriodic( n_channels, kernel_size=kernel_size, strides=2, activation='selu', **kwargs )
+    up_layers = lambda n_channels, kernel_size, **kwargs: Conv2DTranspose( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same', **kwargs)
+    conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
+    ### definition of down and upsampling model
     for i in range( self.n_levels): #from top to bottom
-        self.down_path.append( [down_layers( (i+1)*channel_per_down )] )
-        #possible additional operations # self.down_path[-1].append()
-    ## now the path up, take averagepooling + 5x5 convolution and concatenate channels 
-    ## i could also write a layer class which has this, and does the operation below
-    ## i think that is more elegant, makes the call less cluttered indeed
+        n_layers = (i+1)*channel_per_down
+        self.down_path.append( [[down_layers( n_layers, name=f'direct_down{i}' ), down_layers( n_layers, kernel_size=5 )]]  )
+        self.down_path[-1].append( Concatenate() )
+        self.down_path[-1].append( conv_1x1( n_layers) )
+        #self.down_path[-1].append( layer())
     for i in range( self.n_levels, 0, -1): #from bottom to top
+        ## operations on the coarse grained image
+        n_layers = i*channel_per_down
+        idx = self.n_levels-i #required for names
         self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
-        self.processors[-1].append( Conv2DPeriodic( i*channel_per_down, kernel_size=5, strides=1) )
-        ## possible additional  operations #self.processors[-1].append()
-        ### concatenators and channel reduction before upsampling
+        self.processors[-1].append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, name=f'img_processor{idx}') )
+        ### concatenate and operate prior channels, reduction before upsampling
         self.concatenators.append( [Concatenate()] )
-        self.concatenators[-1].append( conv_1x1( i*channel_per_down) )
-        ## possible addition of operations
+        self.concatenators[-1].append( Conv2DPeriodic(  n_layers, kernel_size=3, strides=1 ) )
+        self.concatenators[-1].append( conv_1x1( n_layers, name=f'channel_concatenators{idx}') )
         self.concatenators[-1].append( Concatenate() )
+        ## side out pass on each level for loss prediction before upsampling
+        self.side_predictors.append( [Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' )] )
+        self.side_predictors[-1].append( Concatenate() )
         ### upsampling layers, parallel passes with 1x1
         #inception like structure
-        self.upsamplers.append( [[up_layers( (i)*channel_per_down, 3),up_layers( (i)*channel_per_down, 5)]] )
+        self.upsamplers.append( [[up_layers( (i)*channel_per_down, 3, name=f'upsampler_{idx}'),up_layers( (i)*channel_per_down, 5)]] )
         self.upsamplers[-1].append( Concatenate() )
-        self.upsamplers[-1].append( conv_1x1( i*channel_per_down ) ) 
-        ## side out pass on each level for loss prediction
-        self.side_predictors.append( [ Concatenate()] )
-        self.side_predictors[-1].append( conv_1x1( channels_out ) )
+        self.upsamplers[-1].append( conv_1x1( n_layers ) ) 
+    ### concatenate another bypass and all prior channels, then predict it
     self.build_predictor( channels_out)
   
 
-  def build_predictor( self, channels_out):
-    conv_1x1 = lambda n_channels: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu' )
-    channels = max( 1, 2*channels_out//3 )
+  def build_predictor( self, n_predict):
+    """ 
+    build the predictor which gives the final prediction
+    n_predict:  int, how many channels to predict
+    """
+    conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
+    n_channels = int( max( 1, ceil(2*n_predict/3) ) )
     self.predictor = []
     self.predictor.append( Concatenate() )
-    self.predictor.append( [conv_1x1( channels) ] )
-    self.predictor[-1].append( Conv2DPeriodic( channels, kernel_size=3, strides=1)  ) 
-    self.predictor[-1].append( Conv2DPeriodic( channels, kernel_size=5, strides=1)  ) 
-    #final prediction
+    self.predictor.append( [conv_1x1( n_channels) ] )
+    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
+    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
     self.predictor.append( Concatenate() )
-    self.predictor.append( conv_1x1( channels_out) )
-    ## also i need conv2d transpose here
+    self.predictor.append( Conv2D( n_channels, kernel_size=1, strides=1, activation=None ) )
+    # one more smoothing round with inception module, taking a downsamples thing in account
+    self.predictor.append( [Conv2DPeriodic( n_channels, kernel_size=5, strides=1) ] )
+    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  )
+    downsampled_block = [ MaxPool2DPeriodic( 2) ]
+    downsampled_block.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
+    downsampled_block.append( Conv2DTranspose( n_channels, kernel_size=5, strides=2, padding='same')  ) 
+    self.predictor[-1].append( downsampled_block )
+    self.predictor.append( Concatenate() )
+    # final prediction
+    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor' ) )
+    self.predictor.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1) )
 
 
 
+  ### Predictors of each block and call
   def go_down( self, images, training=False):
-    levels = [images] #store the image easily accessible, only reference
+    """
+    extract features from the image and transform them through the layers
+    while downsampling. Will keep all levels for the bypasses in the up path,
+    and orders the levels from lowest resolution to highest resolution.
+    """
+    levels = [images] #store the image easily accessible, only reference, required for later
     for i in range( self.n_levels):
-        j = 0
+        levels.insert( 0, levels[0] ) #take the previous level for operations
         for layer in self.down_path[i]:  #do the operations on each level
-          if j == 0: 
-            levels.insert( 0, layer( levels[0], training=training) )
+          if isinstance( layer,list): #inception module
+              level_prediction = []
+              for layer in layer:
+                  level_prediction.append( layer(levels[0], training=training ) )
+              levels[0] = level_prediction #always write to current level
           else:
-            levels[0] = layer( levels[0], training=training )
-          j += 1
+              levels[0] = layer( levels[0], training=training) 
     return levels
 
-  def go_up( self, levels, training=False, upscaling=None):
+  def go_up( self, levels, training=False, multilevel_prediction=[], single_return=False, *args, **kwargs):
     """
     Upscale the prediction and concatenate each of the layers.
-    If training is true then a list of predictions is returned matching
-    the number of levels.
+    If multilevel_prediction is specified then a list of predictions is
+    returned matching the number of levels, sorted from lowest to highest
+    resolution.
     Parameters:
     -----------
     levels:     list of tf.Tensor like
@@ -107,69 +135,135 @@ class DoubleUNet(Model):
     training:   bool, default False
                 whether we are currently training, also the switch to
                 predict and return the intermediate layers
-    upscaling:  int, default None -> self.n_levels
+    multilevel_prediction:      list of ints, default [] 
                 up to which level to upscale the prediction, if the number
                 is smaller than <self.n_levels>, then the final prediction is
                 not given. Required for pretraining.
+    single_return:              bool, default True:
+                whether to return only the requested level. Multilevel_prediction 
+                must be specified via an int in that case.
     Returns:
     --------
     upscaled_channels:  tf.Tensor or list of tf.Tensors
                         predictions on the last or each layer, depending on parameters 
     """
-    upscaling = self.n_levels if upscaling is None else upscaling
-    multistage_predictions = [] #used during training
+    multilevel_prediction = range( self.n_levels) if multilevel_prediction is True else multilevel_prediction
+    multilevel_prediction = [multilevel_prediction] if (isinstance( multilevel_prediction, int) 
+                            and not isinstance( multilevel_prediction, bool) ) else multilevel_prediction
+    if single_return and len( multilevel_prediction) > 1:
+        raise Exception( "InputError in go_up, 'multilevel_prediction' must be an int if 'single_return' is set True" )
+    multistage_predictions = [] 
     previous_channels = []
     for i in range( self.n_levels ):
       coarse_grained = self.processors[i][0](levels[-1] )  #original image
       layer_channels = coarse_grained
       for layer in self.processors[i][1:]: #operate on the coarse grained image
           layer_channels = layer( layer_channels, training=training )  
-      #concatenate down_path and current up path
+      #concatenate down_path and current up path and do some operations
       layer_channels = self.concatenators[i][0]( [layer_channels, levels[i] ] + previous_channels )
-      ## do an arbitrary amount of operations in there
-      for layer in self.concatenators[i][1:-1]: 
+      for layer in self.concatenators[i][1:-1]:  #omit concatenator
           layer_channels = layer( layer_channels, training=training )
-      previous_channels = self.concatenators[i][-1]( [layer_channels, coarse_grained]) #add the coarse grained image
-      ## do the conv2d transpose thingy
-      for layer in self.upsamplers[i]:
-          if isinstance( layer,list):
-              inception_pred = []
-              for layer in layer:
-                  inception_pred.append( layer(layer_channels, training=training) )
-              del layer_channels
-              layer_channels = inception_pred
-          else:
-              layer_channels = layer( layer_channels, training=training )
-      previous_channels = [layer_channels]  #needed as list for concatenation
-      ### if we are currently training we require each of the levels to be predicted
-      if training:
-          multistage_predictions.append( self.side_predictors[i][0](previous_channels) )
-          for layer in self.side_predictors[i][1:]:
-            multistage_predictions[-1] = ( layer(multistage_predictions[-1]) )
-      del coarse_grained, layer_channels
-    if training:
-        multistage_predictions.append( previous_channels )
+      layer_channels = self.concatenators[i][-1]( [layer_channels, coarse_grained]) #add the coarse grained image for upsampling/prediction
+      ### predictions on the current level, and concatenate it back to the feature list
+      level_prediction = self.side_predictors[i][0]( layer_channels)
+      for layer in self.side_predictors[i][1:-1]: #omit concatenator
+        level_prediction = layer( level_prediction) 
+      layer_channels = self.side_predictors[i][-1]( [layer_channels, level_prediction] )
+      ### if requested append or return the prediction of current level
+      if multilevel_prediction and i in multilevel_prediction:
+          if single_return:
+              return level_prediction
+          multistage_predictions.append( level_prediction)
+      ## upsampling layers to higher resolution
+      layer_channels = self.predict_inception( self.upsamplers[i], layer_channels, training=training)
+      #for layer in self.upsamplers[i]:
+      #    if isinstance( layer,list): #inception module
+      #        inception_pred = []
+      #        for layer in layer:
+      #            inception_pred.append( layer(layer_channels, training=training) )
+      #        del layer_channels
+      #        layer_channels = inception_pred
+      #    else:
+      #        layer_channels = layer( layer_channels, training=training )
+      ## prepare for next loop
+      previous_channels = [layer_channels]
+    if multilevel_prediction:
+        multistage_predictions.append( previous_channels)  #previous channels has to be a list
         return multistage_predictions
     else:
         return previous_channels
 
 
   def predict( self, images, feature_channels, training=False):
+    """
+    Return the final prediction of the model by using the images in a 1:1 bypass 
+    as well as the high level features derived from the U in the net.
+    Parameters:
+    -----------
+    images:     tf.tensor like of shape 
+                image data, must contain 4 channels
+    feature_channels:   list of tf.tensor_like
+                        features obtained from the U in the model
+    training:           bool, default False
+                        if we are currently training (@gradients) 
+    Returns:
+    --------
+    prediction: tf.tensor or list of tf.tensor
+                final prediction of the model on the original resolution
+    """
     #concat image and channels
     prediction = self.predictor[0]( feature_channels + [images])
-    for layer in self.predictor[1:]:
-        if isinstance( layer,list):
-            inception_pred = []
-            for layer in layer:
-                inception_pred.append( layer(prediction, training=training ) )
-            del prediction
-            prediction = inception_pred
-        else:
-            prediction = layer( prediction, training=training) 
+    prediction = self.predict_inception( self.predictor[1:], prediction, training=training)
+    #for layer in self.predictor[1:]:
+    #    if isinstance( layer,list):
+    #        inception_pred = []
+    #        for layer in layer:
+    #            if isinstance( layer, list):
+    #                inception_pred.append( layer[0](prediction, training=training) )
+    #                for layer in layer[1:]:
+    #                    inception_pred[-1] = layer(inception_pred[-1] )
+    #            else:
+    #                inception_pred.append( layer(prediction, training=training ) )
+    #        del prediction
+    #        prediction = inception_pred
+    #    else:
+    #        prediction = layer( prediction, training=training) 
     return prediction
 
 
-  def call( self, images, training=False, multisage_losses=False, *args, **kwargs):
+  def predict_inception( self, layers, images, *layer_args, **layer_kwargs):
+    """
+    predict the current images using the layers with the <images> data.
+    This function takes in any layers put into list up to 1 inception
+    module (no nested inception modules) with arbitrary depth in each
+    branch
+    Parameters:
+    -----------
+    layers:     list or nested list of tf.keras.Layers
+                layers to conduct the prediction with
+    images:     tensorflow.tensor like
+                image data of at least 4 dimensions
+    *layer_kw/args: 
+                arbitrary inputs directy passed to each layer
+    """
+    for layer in layers:
+        if isinstance( layer,list): #inception module
+            inception_pred = []
+            for layer in layer:
+                if isinstance( layer, list): #deep inception module
+                    inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
+                    for deeper_layer in layer[1:]:
+                        inception_pred[-1] = deeper_layer(inception_pred[-1] )
+                else: #only parallel convolutions
+                    pred =  layer(images, *layer_args, **layer_kwargs) 
+                    inception_pred.append(pred)
+            images = inception_pred
+        else: #simple layer
+            images = layer( images, *layer_args, **layer_kwargs) 
+    return images
+
+
+  def call( self, images, training=False, multilevel_prediction=[], *args, **kwargs):
     """
     Predict the given images by the double U-net. The first down pass
     needs to be stored in memory, the up pass tries to parallelize as
@@ -182,10 +276,8 @@ class DoubleUNet(Model):
                 image data to predict
     training:   bool, default False
                 if the model is trained currently
-    multistage_losses:  bool, default False
-                whether to give return prediction on each level of 
-                upsampling. CAREFUL: Requires the 'training' to be not
-                false, i.e. True or None.
+    multilevel_losses:  list of ints, default []
+                which level(s) to return in addition to the model prediction.
     Returns:
     --------
     prediction: tensorflow.tensor or list of tf.tensors
@@ -194,15 +286,72 @@ class DoubleUNet(Model):
                 multistage losses is set true.
     """
     predictions = self.go_down( images, training=training)
-    predictions = self.go_up( predictions, training=training)
-    if training:
-        predictions[-1] = self.predict( images, predictions[-1], training=training ) 
+    predictions = self.go_up( predictions, training=training, multilevel_prediction=multilevel_prediction )
+    if multilevel_prediction:
+        predictions[-1] = self.predict( images, predictions[-1], training=training) 
     else:
         predictions = self.predict( images, predictions, training=training )
     return predictions
       
 
-### Freezing functions
+  ### Pretraining functions
+  def pretrain_level( self, level, train_data, n_epochs=250, n_batches=50, valid_data=None,  ):
+    """
+    pretrain at current <level> given the data. Will assume that the data is
+    of original resolution and downscale accordingly. Note that the data
+    tuples getting passed will become unusable after this function due to
+    list method callin.
+    """
+    tic( f'trained level{level}', silent=True )
+    # model related stuff and data preprocessng, things i might need to adjust
+    optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5 )
+    cost_function = tf.keras.losses.MeanSquaredError() #validate with
+    loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
+    stopping_delay = 20
+
+    ### other required static variables
+    pooling       = AvgPool2DPeriodic( 2**(self.n_levels - level) )
+    if valid_data is not None:
+        y_valid = pooling( valid_data.pop(-1) ) 
+        x_valid = valid_data[0]
+    y_train = pooling( train_data.pop(-1) )
+    ## freeze everything except for the things trainign currently, freezing all for simplicity
+    self.freeze_all() #for simplicity kept in the loop
+    self.freeze_downscalers( False)
+    self.freeze_processors( False, range(level+1)) 
+    self.freeze_concatenators( False, range(level+1)) 
+    self.freeze_side_predictors( False, range( level+1))
+    self.freeze_upsamplers( False, range(level) ) 
+    ## loop variables allocation
+    worsened = 0
+    best_epoch = 0
+    valid_loss = []
+    ## training
+    for i in range( n_epochs):
+      batched_data = get.batch_data( train_data[0], y_train, n_batches, x_extra=train_data[1:] )
+      for x_batch, y_batch in batched_data:
+          with tf.GradientTape() as tape:
+              y_pred = self.go_down( x_batch, training=True)
+              y_pred = self.go_up( y_pred, training=True, multilevel_prediction=level, single_return=True )
+              batch_loss = cost_function( y_pred, y_batch )
+          gradient = tape.gradient( batch_loss, self.trainable_variables)
+          optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
+      if valid_data is not None:
+          pred_valid = self.go_down( x_valid, training=False) 
+          pred_valid = self.go_up( pred_valid, training=True, multilevel_prediction=level, single_return=True )
+          valid_loss.append( loss_metric( pred_valid, y_valid)  )
+          if valid_loss[-1] < valid_loss[best_epoch]:
+              best_epoch = i
+              worsened = 0
+          else: 
+              worsened += 1 
+          if worsened > stopping_delay:
+              break
+    toc( f'trained level{level}')
+    del pooling 
+    return valid_loss
+    ### Freezing functions
+
   def freeze_all( self, freeze=True):
       """ 
       freeze or unfreeze the whole model by calling upon every method
@@ -276,8 +425,8 @@ class DoubleUNet(Model):
 
   def freeze_concatenators( self, freeze=True, level=None):
     """ 
-    freeze the layers skip connecting the left to right on each
-    level, can specify which level(s) to freeze by passing <level>
+    freeze the layers merging all sources together,
+    can specify which level(s) to freeze by passing <level>
     Parameters:
     -----------
     freeze:     bool, default True
