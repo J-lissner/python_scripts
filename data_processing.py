@@ -1,5 +1,5 @@
 import numpy as np
-import h5py
+import sys
 from math import ceil, floor
 try: import tensorflow as tf
 except: pass
@@ -147,7 +147,7 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     elif scaling[2].lower() in [ 'default', 'single_std1'] :
         scaling[0] = np.mean( data, 0)
         data       = data - scaling[0]
-        scaling[1] = np.sqrt( n-1) / np.sqrt( np.sum( data**2, 0)) 
+        scaling[1] = np.sqrt( (n-1) / np.sum( data**2, 0) ) 
         data       = scaling[1] * data
 
     elif scaling[2] == 'combined_std1':
@@ -207,7 +207,7 @@ def scale_with_shifts( data, scaling):
         data = (data-scaling[0]) @ np.linalg.inv( scaling[1])
     elif '0' in scaling[2] and '1' in scaling[2]:
         data = (data - scaling[0]) /scaling[1] 
-    elif '-1' in scaling[2] and '1' in scaling[2]:
+    elif '-1' in scaling[2] and '0' not in scaling[2]:
         data = (data - scaling[0]) /scaling[1] *2 -1 
     else:
         print('Invalid scaletype given in data_processing.scale_with_shifts, returning raw data') 
@@ -354,6 +354,8 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     ## input preprocessing and variale allocation
     if x_extra is not None and len( x_extra) == 1:
         x_extra = x_extra[0]
+    elif not x_extra:
+        x_extra = None #make sure that false/empty lists etc. are handled correctly
     n_samples = y.shape[0]
     batchsize = int( n_samples // n_batches * (1-stochastic) )
     max_sample = int( n_samples* (1-stochastic) )
@@ -421,14 +423,9 @@ def permute( x, permutation):
     x:              numpy nd-array like
                     basically x[permutation]
     """
-    if isinstance( permutation, (int, slice) ):
-        return x[permutation]
-    if isinstance( x, np.ndarray):
-        return x[permutation]
-    try: #if tensorflow is imported
+    if 'tensorflow' in sys.modules and isinstance( x, (tf.Tensor, tf.Variable) ):
         return tf.gather( x, permutation)
-    except:
-        return np.take( x, permutation, axis=0 )
+    return x[permutation]
 
 
 def rotate_images( images, kappa):
@@ -675,7 +672,7 @@ def slice_args( start, stop, *args):
                     does copy the sliced arrays into memory 
     """
     try:
-        admissible_dtypes = (tf.tensor, np.ndarray)
+        admissible_dtypes = (tf.Tensor, np.ndarray, tf.Variable)
     except:
         admissible_dtypes = np.ndarray
     current_args = []
@@ -705,7 +702,7 @@ def slice_kwargs( start, stop, **kwargs):
                     the key-value pairs
     """
     try:
-        admissible_dtypes = (tf.tensor, np.ndarray)
+        admissible_dtypes = (tf.Tensor, np.ndarray, tf.Variable)
     except:
         admissible_dtypes = np.ndarray
     current_kwargs = dict()
