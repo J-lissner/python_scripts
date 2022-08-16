@@ -83,6 +83,7 @@ class DoubleUNet(Model):
     build the predictor which gives the final prediction
     n_predict:  int, how many channels to predict
     """
+    print( 'setting this many channels to predict in the builder', n_predict )
     conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
     n_channels = int( max( 1, ceil(2*n_predict/3) ) )
     self.predictor = []
@@ -101,8 +102,8 @@ class DoubleUNet(Model):
     self.predictor[-1].append( downsampled_block )
     self.predictor.append( Concatenate() )
     # final prediction
-    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor' ) )
-    self.predictor.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1) )
+    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None) )
+    self.predictor.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1, name='final_predictor' ) )
 
 
 
@@ -126,7 +127,7 @@ class DoubleUNet(Model):
               levels[0] = layer( levels[0], training=training) 
     return levels
 
-  def go_up( self, levels, training=False, multilevel_prediction=[], single_return=False, *args, **kwargs):
+  def go_up( self, levels, training=False, multilevel_prediction=[], *args, **kwargs):
     """
     Upscale the prediction and concatenate each of the layers.
     If multilevel_prediction is specified then a list of predictions is
@@ -139,13 +140,11 @@ class DoubleUNet(Model):
     training:               bool, default False
                             whether we are currently training, also the switch to
                             predict and return the intermediate layers
-    multilevel_prediction:  list of ints, default [] 
-                            up to which level to upscale the prediction, if the number
-                            is smaller than <self.n_levels>, then the final prediction is
-                            not given. Required for pretraining.
-    single_return:          bool, default True:
-                            whether to return only the requested level. Multilevel_prediction 
-                            must be specified via an int in that case.
+    multilevel_prediction:  iterable of ints, default [] 
+                            which upscaling level(s) of prediction to return. 
+                            <self.n_levels> refers to the model prediction. 
+                            if the number is smaller than <self.n_levels>, 
+                            the final prediction is not given. Required for pretraining.
     Returns:
     --------
     upscaled_channels:  tf.Tensor or list of tf.Tensors
@@ -154,13 +153,12 @@ class DoubleUNet(Model):
     multilevel_prediction = range( self.n_levels) if multilevel_prediction is True else multilevel_prediction
     multilevel_prediction = [multilevel_prediction] if (isinstance( multilevel_prediction, int) 
                             and not isinstance( multilevel_prediction, bool) ) else multilevel_prediction
-    if single_return and len( multilevel_prediction) > 1:
-        raise Exception( "InputError in go_up, 'multilevel_prediction' must be an int if 'single_return' is set True" )
     multistage_predictions = [] 
     previous_channels = []
+    up_to = self.n_levels if not multilevel_prediction else max( multilevel_prediction) +1
     ## Coarse idea:
     ## put each level into one list, then put arbitrary depth inside these lists
-    for i in range( self.n_levels ):
+    for i in range( up_to):
       coarse_grained = self.processors[i][0](levels[-1] )  #original image
       layer_channels = coarse_grained
       for layer in self.processors[i][1:]: #operate on the coarse grained image
@@ -178,7 +176,7 @@ class DoubleUNet(Model):
       layer_channels = self.side_predictors[i][-1]( [layer_channels, level_prediction] ) #concatenator
       ### if requested append or return the prediction of current level
       if multilevel_prediction and i in multilevel_prediction:
-          if single_return:
+          if len( multilevel_prediction) == 1:
               return level_prediction
           multistage_predictions.append( level_prediction)
       ## upsampling layers to higher resolution
@@ -247,7 +245,7 @@ class DoubleUNet(Model):
     return images
 
 
-  def call( self, images, training=False, multilevel_prediction=[], *args, **kwargs):
+  def call( self, images, multilevel_prediction=False, training=False, *args, **kwargs):
     """
     Predict the given images by the double U-net. The first down pass
     needs to be stored in memory, the up pass tries to parallelize as
@@ -260,27 +258,34 @@ class DoubleUNet(Model):
                 image data to predict
     training:   bool, default False
                 if the model is trained currently
-    multilevel_losses:  list of ints, default []
-                which level(s) to return in addition to the model prediction.
+    multilevel_prediction:  iterable of ints, default False
+                which level(s) to return. May not return the final
+                prediction if specified by the arguments
     Returns:
     --------
     prediction: tensorflow.tensor or list of tf.tensors
                 image data prediction of original resolution with
                 self.n_output channels, or a list of predictions when
-                multistage losses is set true.
+                multistage losses is specified accordingly.
     """
-    #multilevel_prediction = [multilevel_prediction] if isinstance( multilevel_prediction, int) else multilevel_prediction
     predictions = self.go_down( images, training=training)
     predictions = self.go_up( predictions, training=training, multilevel_prediction=multilevel_prediction )
-    if multilevel_prediction:
+    if ( (isinstance( multilevel_prediction, int) and not isinstance( multilevel_prediction, bool) 
+        and self.n_levels != multilevel_prediction ) or 
+        ( hasattr( multilevel_prediction, '__iter__') and len(multilevel_prediction) > 0 
+            and self.n_levels not in multilevel_prediction) ):
+        pass #don't evaluate predictor
+    elif multilevel_prediction:
         predictions[-1] = self.predict( images, predictions[-1], training=training) 
-    else:
+    else: #default arguments, only original resolution prediction
         predictions = self.predict( images, predictions, training=training )
+    if isinstance( predictions, list) and len( predictions) == 1:
+        return predictions[0]
     return predictions
       
 
   ### Pretraining functions
-  def pretrain_level( self, level, train_data, n_epochs=250, n_batches=50, valid_data=None, single_training=True ):
+  def pretrain_level( self, level, train_data, n_epochs=250, batchsize=25, valid_data=None, single_training=True ):
     """
     pretrain at current <level> given the data. Will assume that the data is
     of original resolution and downscale accordingly. Note that the data
@@ -289,14 +294,15 @@ class DoubleUNet(Model):
     gradient computation, but will only validate with the current level.
     Parameters:
     -----------
-    level:              int
-                        (up to) which level to pre train
+    level:              int or iterable of ints
+                        which level(s) to pre train. Has to be sorted ascendingl
+                        CARE: will lead to bugs if (level > self.n_levels).any()
     train_data:         tuple of tf.tensor likes
                         input - output data tuple 
     n_epochs:           int, default 250
                         how many epochs to pre train at most
-    n_batches:          int, default 50
-                        how many batches for train set
+    batchsize:          int, default 25
+                        how big each batch for the train set should be 
     train_data:         tuple of tf.tensor likes, default None
                         input - output data tuple for validation purposes, enables early stopping
     single_training:    bool, default True
@@ -307,7 +313,6 @@ class DoubleUNet(Model):
     valid_loss:         list of floats or None
                         if valid data is given the loss at current level is returned
     """
-    tic( f'trained level{level}', silent=True )
     # model related stuff and data preprocessng, things i might need to adjust
     optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5 )
     cost_function = tf.keras.losses.MeanSquaredError() #validate with
@@ -316,23 +321,32 @@ class DoubleUNet(Model):
     debug_counter = 15
 
     ### other required static variables
-    pooling       = AvgPool2DPeriodic( 2**(self.n_levels - level) )
+    n_batches = max( 1, train_data[0].shape[0] // batchsize )
+    poolers = []
+    level = [level] if isinstance( level, int) else level
+    highest_level = max( level)
+    for i in level[::-1]:
+        if i == highest_level:
+            poolers.append( AvgPool2DPeriodic( 2**(self.n_levels-i) ) )
+        elif i < self.n_levels:
+            poolers.insert(0, AvgPool2DPeriodic( 2**(highest_level-i) ) ) 
+        elif i == self.n_levels:
+            poolers.append( lambda x: x) 
+    y_train = poolers[-1]( train_data.pop(-1) ) #can pool on the highest level anyways
     if valid_data is not None:
-        y_valid = pooling( valid_data.pop(-1) ) 
+        y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level
         x_valid = valid_data[0]
-    y_train = pooling( train_data.pop(-1) ) #can pool on the highest level anyways
-    del pooling
-    poolers = [ lambda x: x]
-    if single_training is True:
-        [poolers.insert(0, AvgPool2DPeriodic( 2**(i+1) ) ) for i in range( level)]
+    poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function
 
+    tic( f'trained level{level}', silent=True )
     ## freeze everything except for the things trainign currently, freezing all for simplicity
+    freeze_limit = range( level[-1] + 1 )
     self.freeze_all() #for simplicity kept in the loop
     self.freeze_downscalers( False)
-    self.freeze_processors( False, range(level+1)) 
-    self.freeze_concatenators( False, range(level+1)) 
-    self.freeze_side_predictors( False, range( level+1))
-    self.freeze_upsamplers( False, range(level) ) 
+    self.freeze_processors( False, freeze_limit) 
+    self.freeze_concatenators( False, freeze_limit) 
+    self.freeze_side_predictors( False, freeze_limit)
+    self.freeze_upsamplers( False, range(level[-1]) ) 
     ## loop variables allocation
     worsened = 0
     best_epoch = 0
@@ -349,13 +363,13 @@ class DoubleUNet(Model):
       for x_batch, y_batch in batched_data:
           with tf.GradientTape() as tape:
               y_pred = self.go_down( x_batch, training=True)
-              y_pred = self.go_up( y_pred, training=True, multilevel_prediction=level, single_return=single_training )
-              if single_training:
-                  batch_loss = cost_function( y_pred, y_batch )
+              y_pred = self.go_up( y_pred, training=True, multilevel_prediction=level )
+              if len( level) == 1:
+                  batch_loss = cost_function( y_batch, y_pred )
               else:
                   batch_loss = 0
                   y_batch = [layer(y_batch) for layer in poolers]
-                  for j in range( n_levels):
+                  for j in level:
                       batch_loss += cost_function( y_pred[j], y_batch[j] )
           gradient = tape.gradient( batch_loss, self.trainable_variables)
           optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
@@ -363,8 +377,8 @@ class DoubleUNet(Model):
       train_loss.append( tf.reduce_mean( batch_loss ) )
       if valid_data is not None:
           pred_valid = self.go_down( x_valid, training=False) 
-          pred_valid = self.go_up( pred_valid, training=True, multilevel_prediction=level, single_return=True )
-          valid_loss.append( loss_metric( pred_valid, y_valid)  )
+          pred_valid = self.go_up( pred_valid, training=True, multilevel_prediction=max(level), single_return=True )
+          valid_loss.append( loss_metric( y_valid, pred_valid )  )
           if valid_loss[-1] < valid_loss[best_epoch]:
               checkpoint_manager.save() 
               best_epoch = i
