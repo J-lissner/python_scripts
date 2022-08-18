@@ -29,7 +29,7 @@ class DoubleUNet(Model):
     ## for now i will assume that the average pooling is a free gift and i do not need
     ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
   ### model building functions
-  def __init__( self, channels_out, n_levels=4, *args, **kwargs):
+  def __init__( self, channels_out, n_levels=4, channel_per_down=4, *args, **kwargs):
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
     channel_per_down = 4 #how many added channels per downsampling in direct convolution
@@ -56,16 +56,16 @@ class DoubleUNet(Model):
         self.down_path[-1].append( conv_1x1( n_layers) )
         #self.down_path[-1].append( layer())
     for i in range( self.n_levels, 0, -1): #from bottom to top
-        ## operations on the coarse grained image
         n_layers = i*channel_per_down
         idx = self.n_levels-i #required for names
+        ## operations on the coarse grained image on 'before' the right
         self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
         self.processors[-1].append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, name=f'img_processor{idx}') )
         ### concatenate and operate prior channels, reduction before upsampling
         self.concatenators.append( [Concatenate()] )
         self.concatenators[-1].append( Conv2DPeriodic(  n_layers, kernel_size=3, strides=1 ) )
         self.concatenators[-1].append( conv_1x1( n_layers, name=f'channel_concatenators{idx}') )
-        self.concatenators[-1].append( Concatenate() )
+        self.concatenators[-1].append( Concatenate() ) #again image and prior features
         ## side out pass on each level for loss prediction before upsampling
         self.side_predictors.append( [Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu' ) ] )
         self.side_predictors[-1].append( [Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation=None), #inception module
@@ -96,27 +96,31 @@ class DoubleUNet(Model):
     self.predictor = []
     self.predictor.append( Concatenate() )
     ## for now commented out to reduce the number of operations on the full resolution
-    #self.predictor.append( [conv_1x1( n_channels) ] )
-    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
-    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
-    #self.predictor.append( Concatenate() )
-    #self.predictor.append( Conv2D( n_channels, kernel_size=1, strides=1, activation=None ) )
+    self.predictor.append( [conv_1x1( n_channels+1) ] )
+    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
+    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
+    self.predictor.append( Concatenate() )
+    #new layers
+    self.predictor.append( Conv2D( 2*n_channels, kernel_size=3, strides=1, activation='selu' ) )
+    self.predictor.append( BatchNormalization() )
     ## one more smoothing round with inception module, taking a downsamples thing in account
     #self.predictor.append( [Conv2DPeriodic( n_channels, kernel_size=5, strides=1) ] )
     #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  )
-    #downsampled_block = [ MaxPool2DPeriodic( 2) ] #deep inception module
+    #downsampled_block = [ AvgPool2DPeriodic( 2) ] #deep inception module
     #downsampled_block.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
     #downsampled_block.append( Conv2DTranspose( n_channels, kernel_size=5, strides=2, padding='same')  ) 
     #self.predictor[-1].append( downsampled_block )
     #self.predictor.append( Concatenate() )
-    # final prediction
-    smoother = []
-    smoother.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1 ) )
-    smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1 ) )
-    smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1, dilation_rate=3) )
-    smoother.append( conv_1x1( n_predict) ) 
-    self.predictor.append( smoother ) 
-    self.predictor.append( Concatenate() ) 
+    ## final prediction
+    #smoother = [] #for now it seemed like the 'smoother' did the opposite effect of what wa asked. I think the dilation sucks balls on sttride 1
+    #smoother.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1, activation='selu' ) )
+    #smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu' ) )
+    ##smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu', dilation_rate=3) )
+    #smoother.append( conv_1x1( n_predict) ) 
+    #self.predictor.append( smoother ) 
+    #self.predictor.append( Concatenate() ) 
+    #self.predictor.append( BatchNormalization() ) 
+    #self.predictor.append( Conv2DPeriodic( n_predict*2, kernel_size=3, strides=1 ) )
     self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
 
 
@@ -171,21 +175,20 @@ class DoubleUNet(Model):
       layer_channels = coarse_grained
       for layer in self.processors[i][1:]: #operate on the coarse grained image
           layer_channels = layer( layer_channels, training=training )  
-      #concatenate down_path and current up path and do some operations
+      #concatenate processed image, down_path and previous current up path 
       layer_channels = self.concatenators[i][0]( [layer_channels, levels[i] ] + previous_channels )
-      for layer in self.concatenators[i][1:-1]:  #omit concatenator
+      for layer in self.concatenators[i][1:-1]:  #omit concatenators
           layer_channels = layer( layer_channels, training=training )
-      layer_channels = self.concatenators[i][-1]( [layer_channels, coarse_grained]) #add the coarse grained image for upsampling/prediction
+      layer_channels = self.concatenators[i][-1]( [layer_channels, coarse_grained]) 
       ### predictions on the current level, and concatenate it back to the feature list
-      level_prediction = self.side_predictors[i][0]( layer_channels)
-      level_prediction = self.predict_inception( self.side_predictors[i][1:-1], level_prediction, training=training) #omit concatenator
-      layer_channels = self.side_predictors[i][-1]( [layer_channels, level_prediction] ) #concatenator
+      level_prediction = self.predict_inception( self.side_predictors[i][:-1], layer_channels, training=training) 
       ### if requested append or return the prediction of current level
       if multilevel_prediction and i in multilevel_prediction:
           if len( multilevel_prediction) == 1:
               return level_prediction
           multistage_predictions.append( level_prediction)
       ## upsampling layers to higher resolution
+      layer_channels = self.side_predictors[i][-1]( [layer_channels, level_prediction] ) #concatenator
       layer_channels = self.predict_inception( self.upsamplers[i], layer_channels, training=training)
       previous_channels = [layer_channels]
     ### Returns the features channels 
@@ -294,7 +297,7 @@ class DoubleUNet(Model):
       
 
   ### Pretraining functions
-  def pretrain_level( self, level, train_data, n_epochs=250, batchsize=25, valid_data=None, single_training=True ):
+  def pretrain_level( self, level, train_data, valid_data=None, **kwargs  ):
     """
     pretrain at current <level> given the data. Will assume that the data is
     of original resolution and downscale accordingly. Note that the data
@@ -308,15 +311,18 @@ class DoubleUNet(Model):
                         CARE: will lead to bugs if (level > self.n_levels).any()
     train_data:         tuple of tf.tensor likes
                         input - output data tuple 
-    n_epochs:           int, default 250
-                        how many epochs to pre train at most
     batchsize:          int, default 25
                         how big each batch for the train set should be 
     train_data:         tuple of tf.tensor likes, default None
                         input - output data tuple for validation purposes, enables early stopping
-    single_training:    bool, default True
-                        if only the current level should be trained or 
-                        the levels below as well
+    **kwargs:           keyworded argumnets with default settings
+        batchsize:      int, default 25
+                        size of batch
+        loss_weigths:   list of floats, default range( 1, n)
+                        how to weight each level when 'level' is an iterable
+        n_epochs:       int, default 250
+                        how many epochs to pre train at most
+        
     Returns:
     --------
     valid_loss:         list of floats or None
@@ -324,17 +330,20 @@ class DoubleUNet(Model):
     """
     # model related stuff and data preprocessng, things i might need to adjust
     optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5 )
-    cost_function = tf.keras.losses.MeanSquaredError() #validate with
+    cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
     stopping_delay = 20
     debug_counter = 15
+    n_epochs = kwargs.pop( 'n_epochs', 250 )
+    batchsize = kwargs.pop( 'batchsize', 25 )
+    loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+1) )
 
     ### other required static variables
     n_batches = max( 1, train_data[0].shape[0] // batchsize )
     poolers = []
     level = [level] if isinstance( level, int) else level
     highest_level = max( level)
-    for i in level[::-1]:
+    for i in level[::-1]: #get the poolers
         if i == self.n_levels:
             poolers.append( lambda x: x) 
         elif i == highest_level:
@@ -378,7 +387,7 @@ class DoubleUNet(Model):
                   batch_loss = 0
                   y_batch = [layer(y_batch) for layer in poolers]
                   for j in level:
-                      batch_loss += cost_function( y_pred[j], y_batch[j] )
+                      batch_loss += loss_weights[j] * cost_function( y_pred[j], y_batch[j] )
           gradient = tape.gradient( batch_loss, self.trainable_variables)
           optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
           epoch_loss.append( batch_loss)
