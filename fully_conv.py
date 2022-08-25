@@ -7,7 +7,7 @@ from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
-from tensorflow.keras.layers import Conv2DTranspose
+from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
@@ -72,13 +72,14 @@ class DoubleUNet(Model):
                                 Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation=None)] )
         self.side_predictors[-1].append( Concatenate() )
         self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
-        self.side_predictors[-1].append( Concatenate() ) #channels and level prediction
+        self.side_predictors[-1].append( UpSampling2D() ) #simple upsampling with interpolation 
         ### upsampling layers, parallel passes with 1x1
         upsampler = [up_layers( n_layers, 3, name=f'upsampler_{idx}') ]
         upsampler.append( up_layers( n_layers, 5) ) #inception like structure
         self.upsamplers.append( [upsampler] )
         self.upsamplers[-1].append( Concatenate() )
         self.upsamplers[-1].append( conv_1x1( n_layers ) ) 
+        self.upsamplers[-1].append( Concatenate() ) #upsampled and conv2dtransposed channels
     ### predictors, concatenation of bypass and convolutions
     self.build_predictor( channels_out)
   
@@ -96,13 +97,10 @@ class DoubleUNet(Model):
     self.predictor = []
     self.predictor.append( Concatenate() )
     ## for now commented out to reduce the number of operations on the full resolution
-    self.predictor.append( [conv_1x1( n_channels+1) ] )
-    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
-    self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
-    self.predictor.append( Concatenate() )
-    #new layers
-    self.predictor.append( Conv2D( 2*n_channels, kernel_size=3, strides=1, activation='selu' ) )
-    self.predictor.append( BatchNormalization() )
+    #self.predictor.append( [conv_1x1( n_channels+1) ] )
+    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
+    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
+    #self.predictor.append( Concatenate() )
     ## one more smoothing round with inception module, taking a downsamples thing in account
     #self.predictor.append( [Conv2DPeriodic( n_channels, kernel_size=5, strides=1) ] )
     #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  )
@@ -121,6 +119,13 @@ class DoubleUNet(Model):
     #self.predictor.append( Concatenate() ) 
     #self.predictor.append( BatchNormalization() ) 
     #self.predictor.append( Conv2DPeriodic( n_predict*2, kernel_size=3, strides=1 ) )
+    ## new test with slightly more operations
+    tuner = [ conv_1x1( n_predict) ]
+    tuner.append(  [Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu') ])
+    #tuner[-1].append( conv_1x1( n_predict) ) #deep inception module
+    self.predictor.append( tuner )
+    self.predictor.append( Concatenate() )
+    self.predictor.append( BatchNormalization() )
     self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
 
 
@@ -188,8 +193,9 @@ class DoubleUNet(Model):
               return level_prediction
           multistage_predictions.append( level_prediction)
       ## upsampling layers to higher resolution
-      layer_channels = self.side_predictors[i][-1]( [layer_channels, level_prediction] ) #concatenator
-      layer_channels = self.predict_inception( self.upsamplers[i], layer_channels, training=training)
+      layer_channels    = self.predict_inception( self.upsamplers[i][:-1], layer_channels, training=training)
+      level_prediction  = self.side_predictors[i][-1]( level_prediction, training=training ) #upsampled
+      layer_channels    = self.upsamplers[i][-1]( [layer_channels, level_prediction ] ) #concatenation
       previous_channels = [layer_channels]
     ### Returns the features channels 
     if multilevel_prediction: #list of levels
@@ -336,7 +342,7 @@ class DoubleUNet(Model):
     debug_counter = 15
     n_epochs = kwargs.pop( 'n_epochs', 250 )
     batchsize = kwargs.pop( 'batchsize', 25 )
-    loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+1) )
+    loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
 
     ### other required static variables
     n_batches = max( 1, train_data[0].shape[0] // batchsize )
