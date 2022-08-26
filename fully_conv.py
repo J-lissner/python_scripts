@@ -60,8 +60,14 @@ class DoubleUNet(Model):
         idx = self.n_levels-i #required for names
         ## operations on the coarse grained image on 'before' the right
         self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
-        self.processors[-1].append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, name=f'img_processor{idx}') )
-        ### concatenate and operate prior channels, reduction before upsampling
+        inception_processor = []
+        inception_processor.append( conv_1x1( 1)  )
+        inception_processor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu') )
+        inception_processor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu') )
+        self.processors[-1].append( inception_processor)
+        self.processors[-1].append( Concatenate())
+        self.processors[-1].append( conv_1x1( n_layers, name=f'img_processor{idx}') )
+        ### concatenate down_path, processors and avgpooled image, channel reduction before upsampling
         self.concatenators.append( [Concatenate()] )
         self.concatenators[-1].append( Conv2DPeriodic(  n_layers, kernel_size=3, strides=1 ) )
         self.concatenators[-1].append( conv_1x1( n_layers, name=f'channel_concatenators{idx}') )
@@ -96,36 +102,6 @@ class DoubleUNet(Model):
     n_channels = int( max( 1, ceil(2*n_predict/3) ) )
     self.predictor = []
     self.predictor.append( Concatenate() )
-    ## for now commented out to reduce the number of operations on the full resolution
-    #self.predictor.append( [conv_1x1( n_channels+1) ] )
-    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  ) 
-    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
-    #self.predictor.append( Concatenate() )
-    ## one more smoothing round with inception module, taking a downsamples thing in account
-    #self.predictor.append( [Conv2DPeriodic( n_channels, kernel_size=5, strides=1) ] )
-    #self.predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1)  )
-    #downsampled_block = [ AvgPool2DPeriodic( 2) ] #deep inception module
-    #downsampled_block.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1)  ) 
-    #downsampled_block.append( Conv2DTranspose( n_channels, kernel_size=5, strides=2, padding='same')  ) 
-    #self.predictor[-1].append( downsampled_block )
-    #self.predictor.append( Concatenate() )
-    ## final prediction
-    #smoother = [] #for now it seemed like the 'smoother' did the opposite effect of what wa asked. I think the dilation sucks balls on sttride 1
-    #smoother.append( Conv2DPeriodic( n_predict, kernel_size=5, strides=1, activation='selu' ) )
-    #smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu' ) )
-    ##smoother.append( Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu', dilation_rate=3) )
-    #smoother.append( conv_1x1( n_predict) ) 
-    #self.predictor.append( smoother ) 
-    #self.predictor.append( Concatenate() ) 
-    #self.predictor.append( BatchNormalization() ) 
-    #self.predictor.append( Conv2DPeriodic( n_predict*2, kernel_size=3, strides=1 ) )
-    ## new test with slightly more operations
-    tuner = [ conv_1x1( n_predict) ]
-    tuner.append(  [Conv2DPeriodic( n_predict, kernel_size=3, strides=1, activation='selu') ])
-    #tuner[-1].append( conv_1x1( n_predict) ) #deep inception module
-    self.predictor.append( tuner )
-    self.predictor.append( Concatenate() )
-    self.predictor.append( BatchNormalization() )
     self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
 
 
@@ -176,14 +152,11 @@ class DoubleUNet(Model):
     up_to = min( up_to, self.n_levels )
     ## Use the coarse grained image and stored channels from the down path and go upward
     for i in range( up_to):
-      coarse_grained = self.processors[i][0](levels[-1] )  #original image
-      layer_channels = coarse_grained
-      for layer in self.processors[i][1:]: #operate on the coarse grained image
-          layer_channels = layer( layer_channels, training=training )  
+      coarse_grained = self.processors[i][0](levels[-1] )  #pooling of original image
+      layer_channels = self.predict_inception( self.processors[i][1:], coarse_grained, training=training)
       #concatenate processed image, down_path and previous current up path 
       layer_channels = self.concatenators[i][0]( [layer_channels, levels[i] ] + previous_channels )
-      for layer in self.concatenators[i][1:-1]:  #omit concatenators
-          layer_channels = layer( layer_channels, training=training )
+      layer_channels = self.predict_inception( self.concatenators[i][1:-1], layer_channels, training=training)
       layer_channels = self.concatenators[i][-1]( [layer_channels, coarse_grained]) 
       ### predictions on the current level, and concatenate it back to the feature list
       level_prediction = self.predict_inception( self.side_predictors[i][:-1], layer_channels, training=training) 
@@ -195,8 +168,8 @@ class DoubleUNet(Model):
       ## upsampling layers to higher resolution
       layer_channels    = self.predict_inception( self.upsamplers[i][:-1], layer_channels, training=training)
       level_prediction  = self.side_predictors[i][-1]( level_prediction, training=training ) #upsampled
-      layer_channels    = self.upsamplers[i][-1]( [layer_channels, level_prediction ] ) #concatenation
-      previous_channels = [layer_channels]
+      layer_channels    = self.upsamplers[i][-1]( [layer_channels, level_prediction ] ) #concat
+      previous_channels = [layer_channels] #for next loop
     ### Returns the features channels 
     if multilevel_prediction: #list of levels
         multistage_predictions.append( previous_channels)  #previous channels has to be a list
@@ -228,7 +201,7 @@ class DoubleUNet(Model):
     return prediction
 
 
-  def predict_inception( self, layers, images, *layer_args, **layer_kwargs):
+  def predict_inception( self, layers, images, debug=False, *layer_args, **layer_kwargs):
     """
     predict the current images using the layers with the <images> data.
     This function takes in any layers put into list up to 1 inception
@@ -245,13 +218,16 @@ class DoubleUNet(Model):
     """
     for layer in layers:
         if isinstance( layer,list): #inception module
+            if debug: print( f'my layer is currently a {type(layer)} ' )
             inception_pred = []
             for layer in layer:
                 if isinstance( layer, list): #deep inception module
+                    if debug: print( 'i am a deep inception module' )
                     inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
                     for deeper_layer in layer[1:]:
                         inception_pred[-1] = deeper_layer(inception_pred[-1] )
                 else: #only parallel convolutions
+                    if debug: print( 'i am a flat inception module' )
                     pred =  layer(images, *layer_args, **layer_kwargs) 
                     inception_pred.append(pred)
             images = inception_pred
