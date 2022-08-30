@@ -1,6 +1,8 @@
-from tensorflow.keras.layers import Conv2D, Concatenate, concatenate, AveragePooling2D, MaxPool2D
-from tensorflow.keras.layers import BatchNormalization, Dense
+from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
+from tensorflow.keras.layers import Conv2DTranspose
+from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate 
 from tensorflow.python.ops import nn, nn_ops
+from math import ceil, floor
 
 def pad_periodic( kernel_size, data):
     """
@@ -29,7 +31,6 @@ def pad_periodic( kernel_size, data):
         pad_r = pad_l - 1 if (kernel_size[1] %2) == 0 else pad_l #right
         pad_b = pad_u - 1 if (kernel_size[0] %2) == 0 else pad_u #bot
     ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
-    ## there might be a bug with 'left right' padding in even kernels, gotta check, i REALLY need to check the evaluation
     if pad_r == 0:
         top_pad = []
     else:
@@ -65,6 +66,8 @@ class Conv2DPeriodic( Conv2D):
             self.k_size = kwargs['kernel_size']
         else: 
             self.k_size = args[1]
+        if 'dilation_rate' in kwargs:
+            self.k_size =  self.k_size + (self.k_size -1) * (kwargs['dilation_rate']-1)
 
     def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
@@ -271,3 +274,72 @@ class LiteratureInception():
     return x
 
 
+
+def transpose_padding(img, strides=(2,2),kernel=(5,5)):
+    #formula for padding is  (img.shape - 1)*strides
+    import numpy as np
+    shape = np.array( img.shape)
+    strides = np.array( strides)
+    kernel = np.array( kernel)
+    padding = kernel //2
+    output_padding = 0
+    formula = lambda shape, strides, kernel, padding: (shape -1)*strides + kernel- 2*padding + 0
+    new_shape = (shape -1)*strides + kernel- 2*padding + output_padding
+    print( new_shape )
+
+
+def upsampling_padding( pad_size, data):
+    """
+    periodically pad the image before upsampling to enforce
+    periodic adjacency correctness
+    Parameters:
+    -----------
+    pad_size:       list of ints or int
+                    size of the padding in each dimension
+    data:           tensorflow.tensor
+                    image data of at least 3 channels, n_sample x n_x x n_y
+    Returns:
+    --------
+    padded_data:    tensorflow.tensor
+                    the padded data by the minimum required width
+    """
+    ## for now i assume that on even sized kernels the result is in the top left
+    if isinstance( pad_size, int):
+        pad_size = 2*[pad_size]
+    pad_l = pad_size[1]
+    pad_u = pad_size[0]
+    pad_r = pad_l
+    pad_b = pad_u
+    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
+    if pad_r == 0:
+        top_pad = []
+    else:
+        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
+    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
+    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
+    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
+    return data
+
+
+class Conv2DTransposePeriodic( Conv2DTranspose):
+    def __init__( self, *args, **kwargs):
+        kwargs['padding'] = 'same' #enforce no padding and do the stuff by myself
+        super(Conv2DTransposePeriodic, self).__init__( *args, **kwargs)
+        if 'kernel_size' in kwargs:
+            kernel_size = kwargs['kernel_size']
+        else: 
+            kernel_size = args[1]
+        if 'strides' in kwargs:
+            stride = kwargs['strides']
+        else: 
+            stride = args[2] 
+        self.p_size = kernel_size//stride #might be a little excessive
+
+    def __call__(self, data, *args, **kwargs):
+        """
+        shadow the original call, simply pad before upsampling and then 
+        cut away the excessive part
+        """
+        upsampled = super().__call__( upsampling_padding( self.p_size, data ), *args, **kwargs)
+        idx = max(2*self.p_size, 2)
+        return upsampled[:, idx:-idx, idx:-idx ]
