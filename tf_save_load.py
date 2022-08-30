@@ -65,14 +65,17 @@ class Saver():
             os.system( 'rm -r {}'.format( self.savepath) )
         os.system( 'mkdir -p {}'.format( self.savepath) )
         os.system( 'touch {}/__init__.py'.format( self.savepath) )
+        with open( '{}/model_name.txt'.format( self.savepath), 'w') as textfile:
+            textfile.write( model_name)
         if os.path.isfile( model_code): 
             os.system( 'cp {} {}/custom_model.py'.format( model_code, self.savepath) )
         else:
             print( 'file for models not found, taking default path of scripts:', self.script_path)
             os.system( 'cp {} {}/custom_model.py'.format( self.script_path+model_code, self.savepath) ) 
+        self.model( model) 
+        self.scaling(3*[None], 3*[None]) #default no scaling saved for flexibility
 
-        with open( '{}/model_name.txt'.format( self.savepath), 'w') as textfile:
-            textfile.write( model_name)
+    def model( self, model):
         model.save_weights('{}/weights/'.format( self.savepath), save_format='tf')
 
 
@@ -256,7 +259,8 @@ class Loader():
             data.append( self.locals() )
         if self.tracked_switch:
             data.append( self.tracked_variables() )
-        return data
+        if len( data) == 1: return data[0]
+        else: return data
 
 
 

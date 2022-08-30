@@ -12,13 +12,12 @@ from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
 import tf_functions as tfun
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
 from other_functions import Cycler, tic, toc
+from learner_functions import LinearSchedule
 
 
-## here i simply define fully convolutional neural networks
-
-
+## here i simply define fully convolutional neural networks 
 
 class DoubleUNet(Model):
 
@@ -30,9 +29,20 @@ class DoubleUNet(Model):
     ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
   ### model building functions
   def __init__( self, channels_out, n_levels=4, channel_per_down=4, *args, **kwargs):
+    """
+    Parameters:
+    -----------
+    channels_out:   int
+                    number of channels to predict
+    n_levels:       int, defaut 4
+                    how many times to downsample by factor 2
+    channel_per_down: int, defaut 4
+                    how many channels in each level, n_channels scales with resolution,
+                    i.e. lowest resolution has 4*4 channels (default arguments) 
+    """
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
-    channel_per_down = 4 #how many added channels per downsampling in direct convolution
+    self.channels_out = channels_out #needs better variabel name
     self.down_path = []
     self.processors = []
     self.concatenators = []
@@ -42,7 +52,7 @@ class DoubleUNet(Model):
     self.check_iter = lambda x: hasattr( x, '__iter__')
     ## direct path down
     down_layers = lambda n_channels, kernel_size=3, **kwargs: Conv2DPeriodic( n_channels, kernel_size=kernel_size, strides=2, activation='selu', **kwargs )
-    up_layers = lambda n_channels, kernel_size, **kwargs: Conv2DTranspose( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same', **kwargs)
+    up_layers = lambda n_channels, kernel_size, **kwargs: Conv2DTransposePeriodic( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same', **kwargs)
     conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
     ### definition of down and upsampling model
     for i in range( self.n_levels): #from top to bottom
@@ -80,8 +90,8 @@ class DoubleUNet(Model):
         self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
         self.side_predictors[-1].append( UpSampling2D() ) #simple upsampling with interpolation 
         ### upsampling layers, parallel passes with 1x1
-        upsampler = [up_layers( n_layers, 3, name=f'upsampler_{idx}') ]
-        upsampler.append( up_layers( n_layers, 5) ) #inception like structure
+        upsampler = [up_layers( n_layers, 2, name=f'upsampler_{idx}') ]
+        upsampler.append( up_layers( n_layers, 4) ) #inception like structure
         self.upsamplers.append( [upsampler] )
         self.upsamplers[-1].append( Concatenate() )
         self.upsamplers[-1].append( conv_1x1( n_layers ) ) 
@@ -89,6 +99,28 @@ class DoubleUNet(Model):
     ### predictors, concatenation of bypass and convolutions
     self.build_predictor( channels_out)
   
+
+  def replace_predictor( self ):
+    """
+    replace the simple predictor with an inception module
+    to be done at the end of training for finetuning
+    """
+    try: del self.predictor
+    except: pass #not yet built
+    n_predict = self.channels_out  
+    layer_kwargs = dict( strides=1, activation='selu' )
+    conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, **layer_kwargs, **kwargs )
+    self.predictor = []
+    self.predictor.append( Concatenate() )
+    #replaced with inception module
+    generic_inception = [conv_1x1( n_predict)]
+    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=3) ] )
+    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=5) ] )
+    generic_inception.append( MaxPool2DPeriodic( 2, strides=1 ) )
+    self.predictor.append( generic_inception)
+    self.predictor.append( Concatenate() )
+    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
+
 
   def build_predictor( self, n_predict):
     """ 
@@ -98,11 +130,9 @@ class DoubleUNet(Model):
     ## Here we build the layers slightly differently than above, when
     ## indexing the [-1] it means we have an inception module. Above it meant
     ## that we had the next level
-    conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
-    n_channels = int( max( 1, ceil(2*n_predict/3) ) )
     self.predictor = []
     self.predictor.append( Concatenate() )
-    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
+    self.predictor.append( Conv2D( self.channels_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
 
 
 
@@ -304,21 +334,25 @@ class DoubleUNet(Model):
                         how to weight each level when 'level' is an iterable
         n_epochs:       int, default 250
                         how many epochs to pre train at most
-        
+        learning_rate:  int or tf...learning rate, default learner_functions.LinearSchedule()
+                        custom learning rate, defaults to my linear schedule with
+                        default parameters, which is relatively high learning rate 
     Returns:
     --------
     valid_loss:         list of floats or None
                         if valid data is given the loss at current level is returned
     """
     # model related stuff and data preprocessng, things i might need to adjust
-    optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5 )
+    n_epochs = kwargs.pop( 'n_epochs', 250 )
+    batchsize = kwargs.pop( 'batchsize', 25 )
+    loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
+    learning_rate = kwargs.pop( 'learning_rate', 2e-3 )
+    ## other twiddle parameters
+    optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5, learning_rate=learning_rate )
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
     stopping_delay = 20
     debug_counter = 15
-    n_epochs = kwargs.pop( 'n_epochs', 250 )
-    batchsize = kwargs.pop( 'batchsize', 25 )
-    loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
 
     ### other required static variables
     n_batches = max( 1, train_data[0].shape[0] // batchsize )

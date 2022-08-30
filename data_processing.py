@@ -134,24 +134,25 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     scaling:    list of three
                 Parameters and type of the scaling ( can be used in other functions)
     """
-    if data.shape[0] < data.shape[1]:
+    if data.shape[0] < data.shape[1] and data.ndim < 3:
         print( 'Transposing inputs such that each row is one data-sample, assuming that given "slave_data" is of the same format')
         print( '...returning row wise aranged data')
         data = data.T
-        if slave_data:
+        if slave_data is not None:
             slave_data = slave_data.T
     n, m  = data.shape[:2]
+    axis = tuple( range( data.ndim-1) )
     scaling = [None,None, scaletype]
     if scaling[2] is None:
         pass
     elif scaling[2].lower() in [ 'default', 'single_std1'] :
-        scaling[0] = np.mean( data, 0)
+        scaling[0] = np.mean( data, axis=axis)
         data       = data - scaling[0]
-        scaling[1] = np.sqrt( (n-1) / np.sum( data**2, 0) ) 
+        scaling[1] = np.sqrt( (n-1) / np.sum( data**2, axis=axis) ) 
         data       = scaling[1] * data
 
     elif scaling[2] == 'combined_std1':
-        scaling[0] = np.mean( data,0) 
+        scaling[0] = np.mean( data,axis=axis) 
         data       = data - scaling[0]
         scaling[1] = np.sqrt( m*n-1) / np.linalg.norm( data,'fro') 
         data       = scaling[1] * data
@@ -165,15 +166,15 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         data =  data @ np.linalg.inv( scaling[1] ) 
 
     elif '0' in scaling[2] and '1' in scaling[2]:
-        scaling[0] = np.min( data, 0)
+        scaling[0] = np.min( data, axis=axis)
         data       = data - scaling[0]
-        scaling[1] = np.max( data, 0)
+        scaling[1] = np.max( data, axis=axis)
         data       = data /scaling[1]
 
     elif '-1' in scaling[2] and '1' in scaling[2]:
-        scaling[0] = np.min( data, 0)
+        scaling[0] = np.min( data, axis=axis)
         data       = data - scaling[0]      
-        scaling[1] = np.max( data, 0)     
+        scaling[1] = np.max( data, axis=axis)     
         data       = data /scaling[1] *2 -1 
     else:
         print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
@@ -354,12 +355,11 @@ def batch_data( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_e
     ## input preprocessing and variale allocation
     if x_extra is not None and len( x_extra) == 1:
         x_extra = x_extra[0]
-    elif not x_extra:
-        x_extra = None #make sure that false/empty lists etc. are handled correctly
     n_samples = y.shape[0]
     batchsize = int( n_samples // n_batches * (1-stochastic) )
     max_sample = int( n_samples* (1-stochastic) )
-    i = -1 #to catch errors for n_batches == 1
+    #i = -1 #to catch errors for n_batches == 1
+    jj = 0
     batches = []
     ## shuffle all samples if asked for
     if shuffle:
