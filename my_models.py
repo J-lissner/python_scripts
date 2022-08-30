@@ -4,7 +4,7 @@ import itertools
 from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, concatenate
-from data_processing import slice_args, slice_kwargs
+import data_processing as get
 
 
 # overwrite the model to get default behaviour
