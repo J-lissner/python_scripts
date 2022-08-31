@@ -70,11 +70,11 @@ class DoubleUNet(Model):
         idx = self.n_levels-i #required for names
         ## operations on the coarse grained image on 'before' the right
         self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
-        inception_processor = []
-        inception_processor.append( conv_1x1( 1)  )
-        inception_processor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu') )
-        inception_processor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu') )
-        self.processors[-1].append( inception_processor)
+        coarse_grain_processor = []
+        coarse_grain_processor.append( conv_1x1( 1)  )
+        coarse_grain_processor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu') )
+        coarse_grain_processor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu') )
+        self.processors[-1].append( coarse_grain_processor)
         self.processors[-1].append( Concatenate())
         self.processors[-1].append( conv_1x1( n_layers, name=f'img_processor{idx}') )
         ### concatenate down_path, processors and avgpooled image, channel reduction before upsampling
@@ -82,20 +82,23 @@ class DoubleUNet(Model):
         self.concatenators[-1].append( Conv2DPeriodic(  n_layers, kernel_size=3, strides=1 ) )
         self.concatenators[-1].append( conv_1x1( n_layers, name=f'channel_concatenators{idx}') )
         self.concatenators[-1].append( Concatenate() ) #again image and prior features
-        ## side out pass on each level for loss prediction before upsampling
-        self.side_predictors.append( [Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu' ) ] )
-        self.side_predictors[-1].append( [Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation=None), #inception module
-                                Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation=None)] )
-        self.side_predictors[-1].append( Concatenate() )
-        self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
-        self.side_predictors[-1].append( UpSampling2D() ) #simple upsampling with interpolation 
-        ### upsampling layers, parallel passes with 1x1
+        ### Use conv2dtranspose to upsample all feature layers
         upsampler = [up_layers( n_layers, 2, name=f'upsampler_{idx}') ]
         upsampler.append( up_layers( n_layers, 4) ) #inception like structure
         self.upsamplers.append( [upsampler] )
         self.upsamplers[-1].append( Concatenate() )
         self.upsamplers[-1].append( conv_1x1( n_layers ) ) 
         self.upsamplers[-1].append( Concatenate() ) #upsampled and conv2dtransposed channels
+        ## side out pass on each level for loss prediction before upsampling
+        inception_predictor = [conv_1x1(n_layers)]
+        inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu' ) )
+        inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu' ) )
+        inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
+        self.side_predictors[-1].append( inception_predictor )
+        self.side_predictors[-1].append( Concatenate() )
+        self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
+        self.side_predictors[-1].append( UpSampling2D() ) #use upsampling for prediction layers
+        ### upsampling layers, parallel passes with 1x1
     ### predictors, concatenation of bypass and convolutions
     self.build_predictor( channels_out)
   
