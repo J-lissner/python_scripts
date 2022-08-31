@@ -94,7 +94,7 @@ class DoubleUNet(Model):
         inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu' ) )
         inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu' ) )
         inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
-        self.side_predictors[-1].append( inception_predictor )
+        self.side_predictors.append( [inception_predictor] )
         self.side_predictors[-1].append( Concatenate() )
         self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
         self.side_predictors[-1].append( UpSampling2D() ) #use upsampling for prediction layers
