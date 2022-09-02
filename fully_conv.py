@@ -12,9 +12,9 @@ from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
 import tf_functions as tfun
+import learner_functions as learn
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
 from other_functions import Cycler, tic, toc
-from learner_functions import LinearSchedule
 
 
 ## here i simply define fully convolutional neural networks 
@@ -117,8 +117,8 @@ class DoubleUNet(Model):
     self.predictor.append( Concatenate() )
     #replaced with inception module
     generic_inception = [conv_1x1( n_predict)]
-    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=3) ] )
-    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=5) ] )
+    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=3, activation='selu') ] )
+    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=5, activation='selu')  ])
     generic_inception.append( MaxPool2DPeriodic( 2, strides=1 ) )
     self.predictor.append( generic_inception)
     self.predictor.append( Concatenate() )
@@ -232,7 +232,7 @@ class DoubleUNet(Model):
     prediction = self.predictor[0]( feature_channels + [images])
     prediction = self.predict_inception( self.predictor[1:], prediction, training=training)
     return prediction
-
+ 
 
   def predict_inception( self, layers, images, debug=False, *layer_args, **layer_kwargs):
     """
@@ -337,9 +337,11 @@ class DoubleUNet(Model):
                         how to weight each level when 'level' is an iterable
         n_epochs:       int, default 250
                         how many epochs to pre train at most
-        learning_rate:  int or tf...learning rate, default learner_functions.LinearSchedule()
+        learning_rate:  int or tf...learning rate, default learner_functions.SuperConvergence()
                         custom learning rate, defaults to my linear schedule with
                         default parameters, which is relatively high learning rate 
+        stopping_delay  int, default 20
+                        after how many epochs of no improvement of the validat loss to break
     Returns:
     --------
     valid_loss:         list of floats or None
@@ -347,18 +349,23 @@ class DoubleUNet(Model):
     """
     # model related stuff and data preprocessng, things i might need to adjust
     n_epochs = kwargs.pop( 'n_epochs', 250 )
+    stopping_delay = kwargs.pop( 'stopping_dealy', 20 )
     batchsize = kwargs.pop( 'batchsize', 25 )
     loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
-    learning_rate = kwargs.pop( 'learning_rate', 2e-3 )
+    n_batches = max( 1, train_data[0].shape[0] // batchsize )
+    learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
     ## other twiddle parameters
-    optimizer     = tfa.optimizers.AdamW( weight_decay=1e-5, learning_rate=learning_rate )
+    delay_factor  = 2.5
+    debug_counter = 15
+    optimizer_kwargs = dict(weight_decay=1e-5, beta_1=0.9  )
+    optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
-    stopping_delay = 20
-    debug_counter = 15
 
     ### other required static variables
-    n_batches = max( 1, train_data[0].shape[0] // batchsize )
+    first_slash = True
+    learning_rate.reference_optimizer( optimizer)
+    learning_rate.reference_model( self)
     poolers = []
     level = [level] if isinstance( level, int) else level
     highest_level = max( level)
@@ -375,7 +382,7 @@ class DoubleUNet(Model):
         x_valid = valid_data[0]
     poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function
 
-    tic( f'trained level{level}', silent=True )
+    tic( f'trained level {level}', silent=True )
     ## freeze everything except for the things trainign currently, freezing all for simplicity
     freeze_limit = range( min(level[-1] + 1, self.n_levels) )
     self.freeze_all() #for simplicity kept in the loop
@@ -388,10 +395,14 @@ class DoubleUNet(Model):
     worsened = 0
     best_epoch = 0
     valid_loss = []
-    train_loss = []
-    checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
-    ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
-    checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
+    train_loss = [0.5] #start with a random number because valid loss starts with an entry
+    if valid_data is not None:
+      pred_valid = self( x_valid, multilevel_prediction=max(level) )
+      valid_loss.append( loss_metric( y_valid, pred_valid )  )
+      checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
+      ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
+      checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
+      checkpoint_manager.save()
     ## training
     tic( f'    trained another {debug_counter} epochs', silent=True )
     for i in range( n_epochs):
@@ -416,20 +427,30 @@ class DoubleUNet(Model):
           valid_loss.append( loss_metric( y_valid, pred_valid )  )
           if valid_loss[-1] < valid_loss[best_epoch]:
               checkpoint_manager.save() 
-              best_epoch = i
+              best_epoch = i+1 #we started with 1 entry in the valid loss
               worsened = 0
           else: 
               worsened += 1 
           if worsened > stopping_delay:
+              if isinstance( learning_rate, learn.slashable_lr()) and not learning_rate.allow_stopping:
+                  learning_rate.slash()
+                  worsened = 0
+                  if first_slash:
+                    stopping_delay *= delay_factor
+                    first_slash = False
+                  continue
               print( f'    model converged when pretraining {level} after {i} epochs' )
               break
       if (i+1) % debug_counter == 0:
-          toc( f'    trained another {debug_counter} epochs' )
+          toc( f'    trained another {debug_counter} epochs', auxiliary=f', total: {i+1}' )
           tic( f'    trained another {debug_counter} epochs', silent=True )
-          print( '    current training loss: {:.6f}, vs best {:.6f}'.format( train_loss[i], train_loss[best_epoch] ) )  
-          print( '    current valid loss:    {:.6f}, vs best {:.6f}'.format( valid_loss[i], valid_loss[best_epoch] ) )  
-    toc( f'trained level{level}')
-    checkpoint.restore( checkpoint_manager.latest_checkpoint)
+          print( f'    train loss: {train_loss[-1]:1.4e},  vs best {train_loss[best_epoch]:1.4e}'  )
+          print( f'    valid loss: {valid_loss[-1]:1.4e},  vs best {valid_loss[best_epoch]:1.4e}' )
+    toc( f'trained level {level}')
+    if valid_data is not None:
+        checkpoint.restore( checkpoint_manager.latest_checkpoint)
+    if i == (n_epochs - 1):
+        print( f'pretrained level {level} for the full {n_epochs} epochs' )
     del poolers #don't want layers lying around
     return valid_loss
 
