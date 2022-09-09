@@ -28,7 +28,7 @@ class DoubleUNet(Model):
     ## for now i will assume that the average pooling is a free gift and i do not need
     ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
   ### model building functions
-  def __init__( self, channels_out, n_levels=4, channel_per_down=4, *args, **kwargs):
+  def __init__( self, channels_out, n_levels=4, channel_per_down=4, loaded=False, *args, **kwargs):
     """
     Parameters:
     -----------
@@ -39,6 +39,9 @@ class DoubleUNet(Model):
     channel_per_down: int, defaut 4
                     how many channels in each level, n_channels scales with resolution,
                     i.e. lowest resolution has 4*4 channels (default arguments) 
+    loaded:         bool, default False
+                    if the predictor should be replaced with the inception module,
+                    i.e. if we invoke a new model or load from a stored one
     """
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
@@ -56,43 +59,43 @@ class DoubleUNet(Model):
     conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, strides=1, activation='selu', **kwargs )
     ### definition of down and upsampling model
     for i in range( self.n_levels): #from top to bottom
-        n_layers = (i+1)*channel_per_down
-        down_operations = [down_layers( n_layers, name=f'direct_down{i}' ) ]
-        down_operations.append(  down_layers( n_layers, kernel_size=5 ) )
+        n_channels = (i+1)*channel_per_down
+        down_operations = [down_layers( n_channels, name=f'direct_down{i}' ) ]
+        down_operations.append(  down_layers( n_channels, kernel_size=5 ) )
         if i != 0: #only in lower levels
             down_operations.append( MaxPool2DPeriodic( 2 ) )
         self.down_path.append( [ down_operations]  )
         self.down_path[-1].append( Concatenate() )
-        self.down_path[-1].append( conv_1x1( n_layers) )
+        self.down_path[-1].append( conv_1x1( n_channels) )
         #self.down_path[-1].append( layer())
     for i in range( self.n_levels, 0, -1): #from bottom to top
-        n_layers = i*channel_per_down
+        n_channels = i*channel_per_down
         idx = self.n_levels-i #required for names
         ## operations on the coarse grained image on 'before' the right
         self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
         coarse_grain_processor = []
         coarse_grain_processor.append( conv_1x1( 1)  )
-        coarse_grain_processor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu') )
-        coarse_grain_processor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu') )
+        coarse_grain_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu') )
+        coarse_grain_processor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu') )
         self.processors[-1].append( coarse_grain_processor)
         self.processors[-1].append( Concatenate())
-        self.processors[-1].append( conv_1x1( n_layers, name=f'img_processor{idx}') )
+        self.processors[-1].append( conv_1x1( n_channels, name=f'img_processor{idx}') )
         ### concatenate down_path, processors and avgpooled image, channel reduction before upsampling
         self.concatenators.append( [Concatenate()] )
-        self.concatenators[-1].append( Conv2DPeriodic(  n_layers, kernel_size=3, strides=1 ) )
-        self.concatenators[-1].append( conv_1x1( n_layers, name=f'channel_concatenators{idx}') )
+        self.concatenators[-1].append( Conv2DPeriodic(  n_channels, kernel_size=3, strides=1 ) )
+        self.concatenators[-1].append( conv_1x1( n_channels, name=f'channel_concatenators{idx}') )
         self.concatenators[-1].append( Concatenate() ) #again image and prior features
         ### Use conv2dtranspose to upsample all feature layers
-        upsampler = [up_layers( n_layers, 2, name=f'upsampler_{idx}') ]
-        upsampler.append( up_layers( n_layers, 4) ) #inception like structure
+        upsampler = [up_layers( n_channels, 2, name=f'upsampler_{idx}') ]
+        upsampler.append( up_layers( n_channels, 4) ) #inception like structure
         self.upsamplers.append( [upsampler] )
         self.upsamplers[-1].append( Concatenate() )
-        self.upsamplers[-1].append( conv_1x1( n_layers ) ) 
+        self.upsamplers[-1].append( conv_1x1( n_channels ) ) 
         self.upsamplers[-1].append( Concatenate() ) #upsampled and conv2dtransposed channels
         ## side out pass on each level for loss prediction before upsampling
-        inception_predictor = [conv_1x1(n_layers)]
-        inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=3, strides=1, activation='selu' ) )
-        inception_predictor.append( Conv2DPeriodic( n_layers, kernel_size=5, strides=1, activation='selu' ) )
+        inception_predictor = [conv_1x1(n_channels)]
+        inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
+        inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu' ) )
         inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
         self.side_predictors.append( [inception_predictor] )
         self.side_predictors[-1].append( Concatenate() )
@@ -101,6 +104,8 @@ class DoubleUNet(Model):
         ### upsampling layers, parallel passes with 1x1
     ### predictors, concatenation of bypass and convolutions
     self.build_predictor( channels_out)
+    if loaded is not False:
+        self.replcae_predictor()
   
 
   def replace_predictor( self ):
@@ -185,7 +190,7 @@ class DoubleUNet(Model):
     up_to = min( up_to, self.n_levels )
     ## Use the coarse grained image and stored channels from the down path and go upward
     for i in range( up_to):
-      coarse_grained = self.processors[i][0](levels[-1] )  #pooling of original image
+      coarse_grained = self.processors[i][0](levels[-1] )  #coarse graining of image
       layer_channels = self.predict_inception( self.processors[i][1:], coarse_grained, training=training)
       #concatenate processed image, down_path and previous current up path 
       layer_channels = self.concatenators[i][0]( [layer_channels, levels[i] ] + previous_channels )
@@ -312,7 +317,7 @@ class DoubleUNet(Model):
       
 
   ### Pretraining functions
-  def pretrain_level( self, level, train_data, valid_data=None, **kwargs  ):
+  def pretrain_level( self, level, train_data, valid_data, **kwargs  ):
     """
     pretrain at current <level> given the data. Will assume that the data is
     of original resolution and downscale accordingly. Note that the data
@@ -328,8 +333,9 @@ class DoubleUNet(Model):
                         input - output data tuple 
     batchsize:          int, default 25
                         how big each batch for the train set should be 
-    train_data:         tuple of tf.tensor likes, default None
-                        input - output data tuple for validation purposes, enables early stopping
+    valid_data:         tuple of tf.tensor likes
+                        input - output data tuple for validation purposes, 
+                        required for early stopping
     **kwargs:           keyworded argumnets with default settings
         batchsize:      int, default 25
                         size of batch
@@ -349,23 +355,23 @@ class DoubleUNet(Model):
     """
     # model related stuff and data preprocessng, things i might need to adjust
     n_epochs = kwargs.pop( 'n_epochs', 250 )
-    stopping_delay = kwargs.pop( 'stopping_dealy', 20 )
+    stopping_delay = kwargs.pop( 'stopping_delay', 30 )
     batchsize = kwargs.pop( 'batchsize', 25 )
     loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
     n_batches = max( 1, train_data[0].shape[0] // batchsize )
     learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
     ## other twiddle parameters
-    delay_factor  = 2.5
+    stopping_increment = 0 #slightly increase the stopping delay after each LR adjustment
     debug_counter = 15
-    optimizer_kwargs = dict(weight_decay=1e-5, beta_1=0.9  )
+    optimizer_kwargs = dict(weight_decay=1e-5, beta_1=0.85, beta_2=0.85  )
     optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
 
     ### other required static variables
-    first_slash = True
-    learning_rate.reference_optimizer( optimizer)
-    learning_rate.reference_model( self)
+    if isinstance( learning_rate, learn.RemoteLR ):
+        learning_rate.reference_optimizer( optimizer)
+        learning_rate.reference_model( self)
     poolers = []
     level = [level] if isinstance( level, int) else level
     highest_level = max( level)
@@ -377,32 +383,32 @@ class DoubleUNet(Model):
         elif i < self.n_levels:
             poolers.insert(0, AvgPool2DPeriodic( 2**(highest_level-i) ) ) 
     y_train = poolers[-1]( train_data.pop(-1) ) #can pool on the highest level anyways
-    if valid_data is not None:
-        y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level
-        x_valid = valid_data[0]
+    y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level
+    x_valid = valid_data[0]
     poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function
 
     tic( f'trained level {level}', silent=True )
     ## freeze everything except for the things trainign currently, freezing all for simplicity
     freeze_limit = range( min(level[-1] + 1, self.n_levels) )
-    self.freeze_all() #for simplicity kept in the loop
+    self.freeze_all() 
     self.freeze_downscalers( False)
     self.freeze_processors( False, freeze_limit) 
     self.freeze_concatenators( False, freeze_limit) 
     self.freeze_side_predictors( False, freeze_limit)
     self.freeze_upsamplers( False, range(level[-1]) ) 
     ## loop variables allocation
-    worsened = 0
+    overfit = 0
+    slash_lr = 0
     best_epoch = 0
     valid_loss = []
     train_loss = [0.5] #start with a random number because valid loss starts with an entry
-    if valid_data is not None:
-      pred_valid = self( x_valid, multilevel_prediction=max(level) )
-      valid_loss.append( loss_metric( y_valid, pred_valid )  )
-      checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
-      ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
-      checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
-      checkpoint_manager.save()
+    pred_valid = self( x_valid, multilevel_prediction=max(level) )
+    valid_loss.append( loss_metric( y_valid, pred_valid )  )
+    checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
+    ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
+    checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
+    checkpoint_manager.save()
+    plateau_loss = valid_loss[0]
     ## training
     tic( f'    trained another {debug_counter} epochs', silent=True )
     for i in range( n_epochs):
@@ -421,38 +427,51 @@ class DoubleUNet(Model):
           gradient = tape.gradient( batch_loss, self.trainable_variables)
           optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
           epoch_loss.append( batch_loss)
+      ## epoch post processing
       train_loss.append( tf.reduce_mean( batch_loss ) )
-      if valid_data is not None:
-          pred_valid = self( x_valid, multilevel_prediction=max(level) )
-          valid_loss.append( loss_metric( y_valid, pred_valid )  )
-          if valid_loss[-1] < valid_loss[best_epoch]:
-              checkpoint_manager.save() 
-              best_epoch = i+1 #we started with 1 entry in the valid loss
-              worsened = 0
-          else: 
-              worsened += 1 
-          if worsened > stopping_delay:
-              if isinstance( learning_rate, learn.slashable_lr()) and not learning_rate.allow_stopping:
-                  learning_rate.slash()
-                  worsened = 0
-                  if first_slash:
-                    stopping_delay *= delay_factor
-                    first_slash = False
-                  continue
-              print( f'    model converged when pretraining {level} after {i} epochs' )
-              break
+      pred_valid = self( x_valid, multilevel_prediction=max(level) )
+      valid_loss.append( loss_metric( y_valid, pred_valid )  ) 
       if (i+1) % debug_counter == 0:
           toc( f'    trained another {debug_counter} epochs', auxiliary=f', total: {i+1}' )
           tic( f'    trained another {debug_counter} epochs', silent=True )
           print( f'    train loss: {train_loss[-1]:1.4e},  vs best {train_loss[best_epoch]:1.4e}'  )
           print( f'    valid loss: {valid_loss[-1]:1.4e},  vs best {valid_loss[best_epoch]:1.4e}' )
+      ## learning rate adjustment
+      if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < 0.93*plateau_loss:  
+        plateau_loss = valid_loss[-1] 
+        slash_lr = 0
+      elif isinstance( learning_rate, learn.slashable_lr()): #if only marginal improvement
+        slash_lr += 1
+        if slash_lr == stopping_delay and not learning_rate.allow_stopping:
+            learning_rate.slash()
+            plateau_loss = valid_loss[-1]
+            stopping_delay += stopping_increment
+            slash_lr = 0
+            overfit = 0
+      ## potential early stopping
+      if valid_loss[-1] < valid_loss[best_epoch]:
+          checkpoint_manager.save() 
+          best_epoch = i+1 #we started with 1 entry in the valid loss
+          overfit = 0
+      else: 
+          overfit += 1 
+      if overfit > stopping_delay:
+          if isinstance( learning_rate, learn.slashable_lr()) and not learning_rate.allow_stopping:
+              learning_rate.slash()
+              plateau_loss = valid_loss[-1]
+              overfit = 0
+              stopping_delay += stopping_increment
+              continue
+          break
     toc( f'trained level {level}')
-    if valid_data is not None:
-        checkpoint.restore( checkpoint_manager.latest_checkpoint)
+    checkpoint.restore( checkpoint_manager.latest_checkpoint)
     if i == (n_epochs - 1):
-        print( f'pretrained level {level} for the full {n_epochs} epochs' )
+        print( f'    pretrained level {level} for the full {n_epochs} epochs' )
+    else: 
+        print( f'    model converged when pretraining {level} after {i} epochs' )
     del poolers #don't want layers lying around
     return valid_loss
+
 
   ### Freezing functions
   def freeze_all( self, freeze=True):
@@ -581,5 +600,8 @@ class DoubleUNet(Model):
                layer.trainable = not freeze
 
 
+
+class DeeperUResNet(DoubleUNet):
+    pass
 
 
