@@ -324,6 +324,8 @@ class DoubleUNet(Model):
     tuples getting passed will become unusable after this function due to
     list method callin. May take every lower level into consideration for
     gradient computation, but will only validate with the current level.
+    It does stop slightly earlier than the 'very optimum' if there are
+    only very minor improvements achieved (speedup for PRE-training'
     Parameters:
     -----------
     level:              int or iterable of ints
@@ -363,6 +365,8 @@ class DoubleUNet(Model):
     ## other twiddle parameters
     stopping_increment = 0 #slightly increase the stopping delay after each LR adjustment
     debug_counter = 15
+    plateau_threshold = 0.93
+    early_stop_threshold = 0.96
     optimizer_kwargs = dict(weight_decay=1e-5, beta_1=0.85, beta_2=0.85  )
     optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
@@ -400,10 +404,9 @@ class DoubleUNet(Model):
     overfit = 0
     slash_lr = 0
     best_epoch = 0
-    valid_loss = []
-    train_loss = [0.5] #start with a random number because valid loss starts with an entry
     pred_valid = self( x_valid, multilevel_prediction=max(level) )
-    valid_loss.append( loss_metric( y_valid, pred_valid )  )
+    valid_loss = [loss_metric( y_valid, pred_valid )]
+    train_loss = [0.5] #start with a random number because valid loss starts with an entry
     checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
     ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
     checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
@@ -412,9 +415,8 @@ class DoubleUNet(Model):
     ## training
     tic( f'    trained another {debug_counter} epochs', silent=True )
     for i in range( n_epochs):
-      batched_data = get.batch_data( train_data[0], y_train, n_batches, x_extra=train_data[1:] )
       epoch_loss = []
-      for x_batch, y_batch in batched_data:
+      for x_batch, y_batch in tfun.batch_data( n_batches, [train_data[0], y_train ] ):
           with tf.GradientTape() as tape:
               y_pred = self( x_batch, level, training=True )
               if len( level) == 1:
@@ -437,7 +439,7 @@ class DoubleUNet(Model):
           print( f'    train loss: {train_loss[-1]:1.4e},  vs best {train_loss[best_epoch]:1.4e}'  )
           print( f'    valid loss: {valid_loss[-1]:1.4e},  vs best {valid_loss[best_epoch]:1.4e}' )
       ## learning rate adjustment
-      if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < 0.93*plateau_loss:  
+      if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < plateau_threshold*plateau_loss:  
         plateau_loss = valid_loss[-1] 
         slash_lr = 0
       elif isinstance( learning_rate, learn.slashable_lr()): #if only marginal improvement
@@ -449,7 +451,7 @@ class DoubleUNet(Model):
             slash_lr = 0
             overfit = 0
       ## potential early stopping
-      if valid_loss[-1] < valid_loss[best_epoch]:
+      if valid_loss[-1] < early_stop_threshold * valid_loss[best_epoch]:
           checkpoint_manager.save() 
           best_epoch = i+1 #we started with 1 entry in the valid loss
           overfit = 0

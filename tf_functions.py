@@ -32,7 +32,7 @@ def to_float32( *args, arraytype='numpy'):
 
 ## the tf.function decorator might has to yeet away, if not using inplace
 @tf.function
-def roll_images( images, part=0.5, slave_images=None):
+def roll_images( data, part=0.5, shuffle=False):
     """
     Given periodic images of shape (n_samples, n_1, n_2, n_channels)
     randomly roll the <part> in x and y direction.
@@ -44,65 +44,69 @@ def roll_images( images, part=0.5, slave_images=None):
     due to this procedure)
     Parameters:
     -----------
-    images:     tensorflow.Variable
-                image data of shape (n_samples, n_1, n_2, n_channels)
+    data:       list of tensorflow.Variable s
+                multiple tensors of shape (n_samples, n_1, n_2, n_channels)
     part:       float, default 0.5
                 what proportion of the randomly selected images should
                 be rolled
     shuffle:    bool, default False
                 if the data should be shuffled during rolling
-    slave_images: tensorflow.Variable, default None
-                has to be a variable, similar to images
     Returns:
     --------
-    images:     tensorflow.tensor
-                images with randomly selected <part> randomly rolled
+    None:       all the input tensors are changed in place
     """
     n_images = images.shape[0]
     n_roll = int( n_images*part )
     img_dim = images.shape[1:3]
     max_roll = min( img_dim)
-    indices = tf.random.shuffle( tf.range( n_images, dtype=tf.int32) )[:n_roll]
+    indices = tf.range( n_images, dtype=tf.int32) 
+    if shuffle is not False:
+        indices = tf.random.shuffle( indices)
+    indices = indices[:n_roll]
     roll = tf.random.uniform( shape=(n_roll, len(img_dim) ), minval=0, maxval=max_roll, dtype=tf.int32 )
-    tf.debugging.Assert(isinstance( images,  tf.Variable), ['roll_images needs tf.Variable(images)'] ) 
-    j = 0
-    for i in indices:
-        images[i].assign( tf.roll( images[i], roll[j], axis=[0,1] ) )
-        if slave_images is not None:
-            slave_images[i].assign( tf.roll( slave_images[i], roll[j], axis=[0,1] ) )
-        j+= 1
+    for x in data:
+        tf.debugging.Assert(isinstance( x,  tf.Variable), ['roll_images needs tf.Variable(images)'] ) 
+    for i,j in zip( indices, range( n_roll) ):
+        for x in data:
+            x[i].assign( tf.roll( x[i], roll[j], axis=[0,1] ) )
 
 
 ## Generators cannot be tf.function s, it significantly slows down training....
-def batch_data( x, y, n_batches, shuffle=True):
+def batch_data( n_batches, data, shuffle=True):
     """
     Generator/Factory function, yields 'n_batches' batches when called in a for loop
     The last batch is the largest if the number of samples is not integer divisible by 'n_batches'
     (the last batch is at most 'n_batches-1' larger than the other batches)
-    Input:
-            x               TF tensor or numpy array
-                            input data of the ANN
-            x               TF tensor or numpy array
-                            output data of the ANN
-            n_batches       int
-                            number of batches to return
-        OPTIONAL
-            shuffle=True    bool
-                            If the data should be shuffled before batching
-    Returns/Yields:
-            x_batch         TF tensor or numpy array
-                            batched input data
-            y_batch         TF tensor or numpy array 
-                            batched output data
+    things as i want
+    Parameters
+    ----------
+    n_batches       int
+                    number of batches to return
+    data:           list of tensorflow.tensors
+                    Tensorflow tensors which should be batched
+    shuffle         bool, default True
+                    If the data should be shuffled during batching
+    Yields:
+    -------
+    batches:        tuple of tensorflow tensors
+                    all of the tensors batched as in given order 
     """
-    n_samples = y.shape[0]
+    n_samples = data[-1].shape[0]
     if shuffle:
-        permutation = tf.random.shuffle( tf.range( n_samples) )
-        x = tf.gather( x, permutation)
-        y = tf.gather( y, permutation)
-    batchsize = tf.math.floor( n_samples/ n_batches)
+        permutation = tf.random.shuffle( tf.range( n_samples, dtype=tf.int32) )
+    else:
+        permutation = tf.range( n_samples, dtype=tf.int32 ) 
+    batchsize = int( tf.math.floor( n_samples/ n_batches) )
     i = -1 # set a value that for n_batches=1 it does return the whole set
     for i in range( n_batches-1):
-        yield x[ i*batchsize:(i+1)*batchsize], y[ i*batchsize:(i+1)*batchsize]
-    yield x[(i+1)*batchsize:], y[(i+1)*batchsize:]
+        idx = permutation[i*batchsize:(i+1)*batchsize]
+        batch = []
+        for x in data:
+            batch.append( tf.gather( x, idx) )
+        yield batch
+    idx = permutation[(i+1)*batchsize:]
+    batch = []
+    for x in data:
+        batch.append( tf.gather( x, idx) )
+    yield batch
 
