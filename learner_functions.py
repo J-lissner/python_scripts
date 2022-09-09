@@ -192,7 +192,6 @@ class RemoteLR(LRSchedules):
         self.allow_stopping   = False 
         self.model_parameters = []
         self.first_slash      = 1/99 #any float value to false the ==
-        self.hold_out         = True
 
 
     def slash( self, remote_call=True):
@@ -216,10 +215,6 @@ class RemoteLR(LRSchedules):
             self.reset_optimizer()
             self.learnrate *= self.jump
             self.phase += 1
-        ## if we have decreased the learning rate once after the spike up
-        elif self.phase == 2*self.n_up and self.hold_out and remote_call: #only possible if n_up > 0
-            print( 'waiting one more remote call on default learnrate')
-            self.hold_out = False #wait for one more remote call of the function
         ## if we are slashing it from outside upon plateau
         elif self.n_up <= self.phase <= (self.n_up + self.n_down):
             print( 'decreasing learning rate')
