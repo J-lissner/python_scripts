@@ -53,7 +53,8 @@ def relative_mse( y, y_pred, axis=None):
     return loss**0.5
 
 def slashable_lr():
-    return (JumpingLR, SuperConvergence, RemoteLR )
+    scheduler = LRSchedules
+    return tuple( [scheduler] + scheduler().children() )
 
 thetas = []
 def estimate_max_lr( model, learnrate):
@@ -151,6 +152,10 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
     def __call__( self, step):
         return self.learnrate
 
+    @classmethod
+    def children( self):
+        return self.__subclasses__()
+
 
 class RemoteLR(LRSchedules):
     """ this is a LR which will be affected mostly by remote operations 
@@ -159,30 +164,30 @@ class RemoteLR(LRSchedules):
     first it will be constant until plateau, then there will be 2 up jumps
     with a fixed amount of steps and thereafter downsteps whenever it 
     plateaus"""
-    def __init__( self, n_steps=50, base_lr=1e-3, jump=10**0.5, jump_up=True, n_down=3 ):
+    def __init__( self, n_steps=50, base_lr=1e-3, jump=10**0.5, n_up=0, n_down=3 ):
         """
         Parameters:
         -----------
-        n_steps:        int, default 100
+        n_steps:        int, default 50
                         how many steps the learnrate should be forced
                         constant when we are upscaling the learnrate
         base_lr:        float, default 1e-3
                         learnrate to start out with, max elligible leranrate will
                         be estimated during runtime, and base_lr adjusted to 
                         max( base_lr, max_lr/jump )
-        jump_up:        bool, default True
-                        if the learning rate should jump up twice to max_lr
+        n_up:           int, default 0
+                        How many times the learning rate should jump up, 
+                        If the number is larger than 1 it will exceed 'max_lr'
         jump:           float, default 10**0.5
                         how big each jump should be
         n_down:         int, default 3
                         how often the learning rate should be decreased by jump
-                        If jump_up is specified then the number of up jumps will
-                        be added to n_down
+                        If n_up>0 then the number of up jumps will be added to n_down
         """
         self.learnrate = base_lr
         self.jump      = jump
         self.n_steps   = n_steps
-        self.n_up      = 2 if jump_up else 0
+        self.n_up      = n_up
         self.n_down    = n_down + self.n_up 
         # other variables required later during evaluateion
         self.phase            = 0 #phases are: constant, (jump up to max), slash down by jump
