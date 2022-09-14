@@ -55,9 +55,9 @@ def roll_images( data, part=0.5, shuffle=False):
     --------
     None:       all the input tensors are changed in place
     """
-    n_images = images.shape[0]
+    n_images = data[0].shape[0]
     n_roll = int( n_images*part )
-    img_dim = images.shape[1:3]
+    img_dim = data[0].shape[1:3]
     max_roll = min( img_dim)
     indices = tf.range( n_images, dtype=tf.int32) 
     if shuffle is not False:
@@ -66,9 +66,11 @@ def roll_images( data, part=0.5, shuffle=False):
     roll = tf.random.uniform( shape=(n_roll, len(img_dim) ), minval=0, maxval=max_roll, dtype=tf.int32 )
     for x in data:
         tf.debugging.Assert(isinstance( x,  tf.Variable), ['roll_images needs tf.Variable(images)'] ) 
-    for i,j in zip( indices, range( n_roll) ):
+    j = 0
+    for i in indices:
         for x in data:
             x[i].assign( tf.roll( x[i], roll[j], axis=[0,1] ) )
+        j += 1
 
 
 ## Generators cannot be tf.function s, it significantly slows down training....

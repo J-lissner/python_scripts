@@ -289,7 +289,10 @@ class Loader():
 
         args = self.get_args()
         kwargs = self.get_kwargs()
-        model = model_code( *args, **kwargs)
+        try: #new 'loaded' kwarg, which acts on init on loading
+            model = model_code( *args, **kwargs, loaded=True)
+        except: #if 'loaded' is not specified as inputs go to default behaviour
+            model = model_code( *args, **kwargs )
         model.load_weights( '{}/weights/'.format( self.load_path) )
         return model
     
