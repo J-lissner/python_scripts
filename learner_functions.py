@@ -53,8 +53,14 @@ def relative_mse( y, y_pred, axis=None):
     return loss**0.5
 
 def slashable_lr():
+    """ have all lr objects  which contain the slash function (must inherit
+    from father method) in one tuple, used for isinstance comparison"""
     scheduler = LRSchedules
     return tuple( [scheduler] + scheduler().children() )
+
+def is_slashable( lr_object):
+    """ Directly return true or false if you can slahs your learning rate"""
+    return isinstance( lr_object, slashable_lr())
 
 thetas = []
 def estimate_max_lr( model, learnrate):
@@ -112,7 +118,7 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
                         to the state on this object invocation
         Returns:
         --------
-        None:           does all operations in place
+        None:           does all operations in place 
         """
         optimizer = self.optimizer if optimizer is None else optimizer
         if optimizer is None:
@@ -132,7 +138,7 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
         Must have the model referenced for this to work
         Must be called three consecutive times in the loop
         """
-        if hasattr( self, 'max_lr' ):
+        if hasattr( self, 'max_lr' ) and self.max_lr is not None:
             return self.max_lr
         if not hasattr( self, 'model_parameters' ):
             self.model_parameters = []
@@ -142,7 +148,8 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
           upper_part     = sum([ np.abs( x - y).sum() for x,y in zip( params[1], params[0] )] )
           lower_part     = sum([ np.abs( 2*x - y - z ).sum() for x,y,z in zip( params[1], params[0], params[2] )] )
           self.max_lr    = self.learnrate * upper_part/lower_part
-          print( f'The maximum estimated learning rate is: {self.learnrate}' )
+          self.learnrate = max( self.learnrate, self.max_lr/self.jump )
+              print( f'adjusting learning rate to be {self.learnrate}, maximum found={self.max_lr}' )
           del self.model_parameters, params, self.model
           return self.max_lr
 
@@ -237,15 +244,7 @@ class RemoteLR(LRSchedules):
         """
         ## estimate the maximum learning rate
         if self.max_lr is None and self.model is not None:
-            self.model_parameters.append( [x.numpy().copy() for x in self.model.trainable_variables] )
-            if len( self.model_parameters) == 3:
-              params         = self.model_parameters
-              upper_part     = sum([ np.abs( x - y).sum() for x,y in zip( params[1], params[0] )] )
-              lower_part     = sum([ np.abs( 2*x - y - z ).sum() for x,y,z in zip( params[1], params[0], params[2] )] )
-              self.max_lr    = self.learnrate * upper_part/lower_part
-              self.learnrate = max( self.learnrate, self.max_lr/self.jump )
-              print( f'adjusting learning rate to be {self.learnrate}, maximum found={self.max_lr}' )
-              del self.model_parameters, params
+            self.estimate_max_lr()
         ### internally adjust the learning rate when increasing it
         if 0 < self.phase <= self.n_up and (step - self.first_slash) % self.n_steps == 0:
             self.slash( remote_call=False)
