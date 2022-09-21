@@ -8,7 +8,7 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D
-from tensorflow.keras.layers import concatenate, Flatten, Concatenate
+from tensorflow.keras.layers import Concatenate, Add
 
 import data_processing as get
 import tf_functions as tfun
@@ -27,6 +27,10 @@ class DoubleUNet(Model):
     ## -> and the averagepool + 5x5 only when i am at current layer
     ## for now i will assume that the average pooling is a free gift and i do not need
     ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
+    ## 'bugs' which i think persist here:
+    ##  - the number of channels does not match on the upsampling operation
+    ##  - something which was intended to be an inception module is actually not
+    ##  - the downsampling in odd sized kernels might introduce gradient shift
   ### model building functions
   def __init__( self, channels_out, n_levels=4, channel_per_down=4, loaded=False, *args, **kwargs):
     """
@@ -45,7 +49,7 @@ class DoubleUNet(Model):
     """
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
-    self.channels_out = channels_out #needs better variabel name
+    self.n_out = channels_out #needs better variabel name
     self.down_path = []
     self.processors = []
     self.concatenators = []
@@ -105,7 +109,7 @@ class DoubleUNet(Model):
     ### predictors, concatenation of bypass and convolutions
     self.build_predictor( channels_out)
     if loaded is not False:
-        self.replcae_predictor()
+        self.replace_predictor()
   
 
   def replace_predictor( self ):
@@ -115,7 +119,7 @@ class DoubleUNet(Model):
     """
     try: del self.predictor
     except: pass #not yet built
-    n_predict = self.channels_out  
+    n_predict = self.n_out  
     layer_kwargs = dict( strides=1, activation='selu' )
     conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, **layer_kwargs, **kwargs )
     self.predictor = []
@@ -140,7 +144,7 @@ class DoubleUNet(Model):
     ## that we had the next level
     self.predictor = []
     self.predictor.append( Concatenate() )
-    self.predictor.append( Conv2D( self.channels_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
+    self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
 
 
 
@@ -260,7 +264,9 @@ class DoubleUNet(Model):
             inception_pred = []
             for layer in layer:
                 if isinstance( layer, list): #deep inception module
-                    if debug: print( 'i am a deep inception module' )
+                    if debug: 
+                        print( 'i am a deep inception module' ) 
+                        print( 'this is my layer', layer[0])
                     inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
                     for deeper_layer in layer[1:]:
                         inception_pred[-1] = deeper_layer(inception_pred[-1] )
@@ -325,7 +331,7 @@ class DoubleUNet(Model):
     list method callin. May take every lower level into consideration for
     gradient computation, but will only validate with the current level.
     It does stop slightly earlier than the 'very optimum' if there are
-    only very minor improvements achieved (speedup for PRE-training'
+    only very minor improvements achieved (speedup for PRE-training' )
     Parameters:
     -----------
     level:              int or iterable of ints
@@ -362,18 +368,18 @@ class DoubleUNet(Model):
     loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
     n_batches = max( 1, train_data[0].shape[0] // batchsize )
     learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
+    optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=1e-5, beta_1=0.85, beta_2=0.85  ) )
     ## other twiddle parameters
     stopping_increment = 0 #slightly increase the stopping delay after each LR adjustment
     debug_counter = 15
     plateau_threshold = 0.93
     early_stop_threshold = 0.96
-    optimizer_kwargs = dict(weight_decay=1e-5, beta_1=0.85, beta_2=0.85  )
     optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
 
     ### other required static variables
-    if isinstance( learning_rate, learn.RemoteLR ):
+    if isinstance( learning_rate, learn.slashable_lr() ):
         learning_rate.reference_optimizer( optimizer)
         learning_rate.reference_model( self)
     poolers = []
@@ -405,7 +411,8 @@ class DoubleUNet(Model):
     slash_lr = 0
     best_epoch = 0
     pred_valid = self( x_valid, multilevel_prediction=max(level) )
-    valid_loss = [loss_metric( y_valid, pred_valid )]
+    best_loss = loss_metric( y_valid, pred_valid )
+    valid_loss = [best_loss]
     train_loss = [0.5] #start with a random number because valid loss starts with an entry
     checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
     ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
@@ -438,27 +445,33 @@ class DoubleUNet(Model):
           tic( f'    trained another {debug_counter} epochs', silent=True )
           print( f'    train loss: {train_loss[-1]:1.4e},  vs best {train_loss[best_epoch]:1.4e}'  )
           print( f'    valid loss: {valid_loss[-1]:1.4e},  vs best {valid_loss[best_epoch]:1.4e}' )
+          if isinstance( learning_rate, learn.slashable_lr()):
+            print( f'    plateau:    {plateau_loss:1.4e}' )
       ## learning rate adjustment
-      if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < plateau_threshold*plateau_loss:  
-        plateau_loss = valid_loss[-1] 
+      if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < plateau_loss:  
+        plateau_loss = plateau_threshold*valid_loss[-1] 
         slash_lr = 0
       elif isinstance( learning_rate, learn.slashable_lr()): #if only marginal improvement
         slash_lr += 1
         if slash_lr == stopping_delay and not learning_rate.allow_stopping:
             learning_rate.slash()
-            plateau_loss = valid_loss[-1]
+            plateau_loss = plateau_threshold*valid_loss[-1]
             stopping_delay += stopping_increment
             slash_lr = 0
             overfit = 0
+      else: #make sure that the model stops upon overfitting
+          plateau_loss = best_loss
       ## potential early stopping
-      if valid_loss[-1] < early_stop_threshold * valid_loss[best_epoch]:
+      if valid_loss[-1] < best_loss:
+          best_loss = early_stop_threshold * valid_loss[-1]
           checkpoint_manager.save() 
           best_epoch = i+1 #we started with 1 entry in the valid loss
           overfit = 0
       else: 
           overfit += 1 
-      if overfit > stopping_delay:
+      if overfit > stopping_delay and best_loss > plateau_loss/50: #just dont wave the flag too early
           if isinstance( learning_rate, learn.slashable_lr()) and not learning_rate.allow_stopping:
+              print( 'slashing the learning rate because i was overfitting' )
               learning_rate.slash()
               plateau_loss = valid_loss[-1]
               overfit = 0
@@ -498,6 +511,8 @@ class DoubleUNet(Model):
     level:      iterator of ints or int, default None
                 which level to freeze, defaults to all
     """
+    if not self.processors:
+        return
     level = range( self.n_levels) if level is None else level
     level = [level] if not self.check_iter(level) else level
     for i in level: #freeze at the requested layer
@@ -518,6 +533,8 @@ class DoubleUNet(Model):
     level:      iterator of ints or int, default None
                 which level to freeze, defaults to all
     """
+    if not self.down_path:
+        return
     level = range( self.n_levels) if level is None else level
     level = [level] if not self.check_iter(level) else level
     for i in level: #freeze at the requested layer
@@ -538,6 +555,8 @@ class DoubleUNet(Model):
     level:      iterator of ints or int, default None
                 which level to freeze, defaults to all
     """
+    if not self.upsamplers:
+        return 
     level = range( self.n_levels) if level is None else level
     level = [level] if not self.check_iter(level) else level
     for i in level: #freeze at the requested layer
@@ -558,6 +577,8 @@ class DoubleUNet(Model):
     level:      iterator of ints or int, default None
                 which level to freeze, defaults to all
     """
+    if not self.concatenators:
+        return 
     level = range( self.n_levels) if level is None else level
     level = [level] if not self.check_iter(level) else level
     for i in level: #freeze at the requested layer
@@ -579,6 +600,8 @@ class DoubleUNet(Model):
     level:      iterator of ints or int, default None
                 which level to freeze, defaults to all
     """
+    if not self.side_predictors:
+        return
     level = range( self.n_levels) if level is None else level
     level = [level] if not self.check_iter(level) else level
     for i in level: #freeze at the requested layer
@@ -594,6 +617,8 @@ class DoubleUNet(Model):
      freeze the layers for the final prediction of original
      resolution
      """
+     if not self.predictor:
+         return
      for layer in self.predictor:
          if self.check_layer( layer):
            layer.trainable = not freeze
@@ -604,6 +629,239 @@ class DoubleUNet(Model):
 
 
 class DeeperUResNet(DoubleUNet):
-    pass
+  """
+  Here i want to have a model which changes a few operations to be more efficient
+  Also takes in some (at least i think so) improvements on the different parts
+  of the model
+  It also takes less inception modules and more 'deep' convolutional layers
+  for memory efficiency and spatial field considerations. Deep inception
+  modules only really make sense for scalar predictions imo
+  Scratches strided convolution for pooling + multiple conv
+  """
+  def __init__( self, channels_out, n_levels=4, channel_per_down=6, loaded=False, *args, **kwargs):
+    """
+    Parameters:
+    -----------
+    channels_out:   int
+                    number of channels to predict
+    n_levels:       int, defaut 4
+                    how many times to downsample by factor 2
+    channel_per_down: int, defaut 4
+                    how many channels in each level, n_channels scales with resolution,
+                    i.e. lowest resolution has 4*4 channels (default arguments) 
+    loaded:         bool, default False
+                    if the predictor should be replaced with the inception module,
+                    i.e. if we invoke a new model or load from a stored one
+    """
+    super().__init__( channels_out, *args, **kwargs )
+    self.n_levels = n_levels #how many times downsample
+    self.n_out = channels_out #needs better variabel name
+    self.down_path = []
+    self.processors = []
+    self.concatenators = []
+    self.upsamplers = []
+    self.side_predictors = []
+    self.skip_connections = []
+    self.edge_enhancer = [] 
+    self.check_layer = lambda x: isinstance( x, tf.keras.layers.Layer )
+    self.check_iter = lambda x: hasattr( x, '__iter__')
+    n_layers_left =  3
+    n_layers_right =  3
+    ## direct path down 
+    generic_conv = lambda n_channels, **kwargs: Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu', **kwargs )
+    up_layers = lambda n_channels, kernel_size, **kwargs: Conv2DTransposePeriodic( n_channels, kernel_size=kernel_size, strides=2, activation='selu', padding='same', **kwargs)
+    ### definition of down and upsampling model
+    self.down_path.append([AvgPool2DPeriodic(2) ])
+    for _ in range( n_layers_left):
+        self.down_path[-1].append( generic_conv( channel_per_down ) ) 
+    for i in range( 1, self.n_levels): #from top to bottom
+        self.down_path.append( [MaxPool2DPeriodic(2) ] )
+        n_channels = (i+1)*channel_per_down 
+        for _ in range( n_layers_left):
+            self.down_path[-1].append( generic_conv( n_channels ) )
+
+    ## definition of the up path
+    for i in range( self.n_levels, 0, -1): #from bottom to top
+        n_channels = i*channel_per_down
+        next_channels = max( 2*self.n_out, (i-1)*channel_per_down )
+        idx = self.n_levels-i #required for names
+        ## merging of up and down path, as well as processor later
+        self.skip_connections.append( [Add()] )
+        self.skip_connections[-1].append( BatchNormalization() )
+        ## add the edges to the upsampled prediction
+        self.edge_enhancer.append( [Conv2D( filters=1, kernel_size=1, strides=1 )] ) 
+        self.edge_enhancer[-1].append( UpSampling2D() ) #use upsampling for prediction layers
+        self.edge_enhancer[-1].append( Add() ) 
+        self.edge_enhancer[-1].append( Concatenate() ) 
+        ## operations on the coarse grained image on 'before' the right
+        self.processors.append( [AvgPool2DPeriodic( 2**(i) )] )  #convolutions on each level to the right
+        for _ in range( n_layers_right):
+            self.processors[-1].append( generic_conv( n_channels ) )
+        ### Use conv2dtranspose to upsample all feature layers
+        upsampler = [up_layers( next_channels, 2, name=f'upsampler_{idx}') ]
+        upsampler.append( up_layers( next_channels, 4) ) #inception like structure
+        self.upsamplers.append( [upsampler] )
+        self.upsamplers[-1].append( Concatenate() )
+        self.upsamplers[-1].append( Conv2D( next_channels, kernel_size=1, strides=1, activation='selu' ) ) 
+        ## side out pass on each level for loss prediction before upsampling
+        self.side_predictors.append( self.inception_layer() )
+        self.side_predictors[-1].append( Conv2D( channels_out, kernel_size=1, strides=1, activation=None, name=f'level_{idx}_predictor' ) )
+    ### predictors, concatenation of bypass and convolutions
+    self.build_predictor( channels_out)
+    if loaded is not False:
+        self.replace_predictor()
+
+  def replace_predictor( self):
+      try: del self.predictor
+      except: pass
+      self.predictor = []
+      self.predictor.append( self.inception_layer() )
+      self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, name='final_predictor' ) ) 
+
+  def inception_layer( self, branch_channels=None):
+      """
+      Simply return the inception predictor, which is the generic module
+      Has a 1x1->3x3, 1x1-> 5x5 and maxpool->1x1 in parallel, reduces the
+      number of channels in each parallel convolution to n_channels
+      Parameters:
+      -----------
+      n_channels:     int, default None
+                      number of channels in each branch, default to 
+                      self.n_out
+      """
+      n_channels = self.n_out if branch_channels is None else branch_channels
+      layer_kwargs = dict( strides=1, activation='selu' )
+      conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, **layer_kwargs, **kwargs )
+      predictor = []
+      #replaced with inception module
+      generic_inception = [[ MaxPool2DPeriodic( 2, strides=1 ), conv_1x1( n_channels)] ]
+      generic_inception.append( [conv_1x1( n_channels), Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') ] )
+      generic_inception.append( [conv_1x1( n_channels), Conv2DPeriodic( n_channels, kernel_size=5, activation='selu')  ])
+      predictor.append( generic_inception)
+      predictor.append( Concatenate() )
+      return predictor
+
+  def go_up( self, levels, training=False, multilevel_prediction=[], *args, **kwargs):
+    """
+    Upscale the prediction and concatenate each of the layers.
+    If multilevel_prediction is specified then a list of predictions is
+    returned matching the number of levels, sorted from lowest to highest
+    resolution.
+    Parameters:
+    -----------
+    levels:                 list of tf.Tensor like
+                            a list of all channels stored during the path down
+    training:               bool, default False
+                            whether we are currently training, also the switch to
+                            predict and return the intermediate layers
+    multilevel_prediction:  iterable of ints, default [] 
+                            which upscaling level(s) of prediction to return. 
+                            <self.n_levels> refers to the model prediction. 
+                            if the number is smaller than <self.n_levels>, 
+                            the final prediction is not given. Required for pretraining.
+    Returns:
+    --------
+    upscaled_channels:  tf.Tensor or list of tf.Tensors
+                        predictions on the last or each layer, depending on parameters 
+    """
+    ## Input preprocessing
+    multilevel_prediction = range( self.n_levels) if multilevel_prediction is True else multilevel_prediction
+    multilevel_prediction = [multilevel_prediction] if (isinstance( multilevel_prediction, int) 
+                            and not isinstance( multilevel_prediction, bool) ) else multilevel_prediction
+    multistage_predictions = [] 
+    layer_channels = []
+    up_to = self.n_levels if not multilevel_prediction else max( multilevel_prediction) +1
+    up_to = min( up_to, self.n_levels )
+    ## Use the coarse grained image and stored channels from the down path and go upward
+    for i in range( up_to):
+      if i == 0:
+          layer_channels = levels.pop(0)  #no upsampled channels available 
+      else:
+          layer_channels = self.skip_connections[i][0]( [levels.pop(0)] + layer_channels ) #upsampled and downsampled
+          layer_channels = self.skip_connections[i][1]( layer_channels) #batch norm
+      coarse_grained = self.processors[i][0](levels[-1] )  #coarse graining of image
+      image_channels = self.predict_inception( self.processors[i][1:], coarse_grained, training=training)
+      layer_channels = self.skip_connections[i][0]( [layer_channels, image_channels] )
+      layer_channels = self.skip_connections[i][1]( layer_channels) #batch norm
+      ## concatenate the prediction of the lower level to the channels
+      if i != 0:
+        coarse_grained   = self.edge_enhancer[i-1][0]( coarse_grained ) #1x1 weighting
+        level_prediction = self.edge_enhancer[i-1][1]( level_prediction )  #upsampling
+        level_prediction = self.edge_enhancer[i-1][2]( [ level_prediction, coarse_grained] ) #add
+        layer_channels   = self.edge_enhancer[i-1][3]( [ level_prediction, layer_channels] ) #concat
+      ### predictions on the current level, and concatenate it back to the feature list
+      level_prediction = self.predict_inception( self.side_predictors[i], layer_channels, training=training) 
+      ### if requested append or return the prediction of current level
+      if multilevel_prediction and i in multilevel_prediction:
+          if len( multilevel_prediction) == 1:
+              return level_prediction
+          multistage_predictions.append( level_prediction)
+      ## upsampling layers to higher resolution
+      layer_channels = self.predict_inception( self.upsamplers[i], layer_channels, training=training)
+      layer_channels = [layer_channels] #for next loop
+    ## put the prediction channels to the feature list 
+    if i == self.n_levels-1: #for the output layer
+        image = levels[-1]
+    else:
+        image = self.processors[i+1][0]( levels[-1] ) #average pooling
+    coarse_grained = self.edge_enhancer[i][0]( image ) #1x1 weighting
+    level_prediction = self.edge_enhancer[i][1]( level_prediction )  #upsampling
+    level_prediction = self.edge_enhancer[i][2]( [ level_prediction, coarse_grained] ) #add
+    layer_channels   = self.edge_enhancer[i][3]( [ level_prediction] + layer_channels ) #concat
+    layer_channels   = [layer_channels] #put it back into a list
+    ### Returns the features channels 
+    if multilevel_prediction: #list of levels
+        multistage_predictions.append( layer_channels)  #layer_channels has to be a list
+        return multistage_predictions
+    else: #only feature channels
+        return layer_channels
+  
+
+  def freeze_edge_enhancer( self, freeze=True, level=None):
+    """ 
+    freeze the layers which add the 'sharp' edges to the
+    upsampled prediction on each level, can specify which
+    level(s) to freeze by passing <level>
+    Parameters:
+    -----------
+    freeze:     bool, default True
+                if False the layers will be unfrozen
+    level:      iterator of ints or int, default None
+                which level to freeze, defaults to all
+    """
+    if not self.edge_enhancer:
+        return
+    level = range( self.n_levels) if level is None else level
+    level = [level] if not self.check_iter(level) else level
+    for i in level: #freeze at the requested layer
+        if self.check_layer(self.edge_enhancer[i]):
+            self.edge_enhancer[i].trainable = not freeze
+        else: 
+            for layer in self.edge_enhancer[i]:
+                layer.trainable = not freeze
+
+  def freeze_skip_connections( self, freeze=True, level=None):
+    """ 
+    freeze the layers which add the 'sharp' edges to the
+    upsampled prediction on each level, can specify which
+    level(s) to freeze by passing <level>
+    Parameters:
+    -----------
+    freeze:     bool, default True
+                if False the layers will be unfrozen
+    level:      iterator of ints or int, default None
+                which level to freeze, defaults to all
+    """
+    if not self.skip_connections:
+        return
+    level = range( self.n_levels) if level is None else level
+    level = [level] if not self.check_iter(level) else level
+    for i in level: #freeze at the requested layer
+        if self.check_layer(self.skip_connections[i]):
+            self.skip_connections[i].trainable = not freeze
+        else: 
+            for layer in self.skip_connections[i]:
+                layer.trainable = not freeze
+
 
 
