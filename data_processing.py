@@ -451,7 +451,6 @@ def rotate_images( images, kappa):
     images = np.rot90( images, axes=(1,2) )
     return images, kappa
 
-
 def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=None, shuffle=False ):
     """
     Augment the periodic image data by rolling some images randomly.
@@ -532,13 +531,12 @@ def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=
         return images, y
 
 
-
-def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0):
+def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None, **kwargs):
     """
-    Generator/Factory function, yields 'n_batches' batches when called as
-    a 'for loop' argument.  The last batch is the largest if the number of
-    samples is not integer divisible by 'n_batches' (the last batch is at
-    most 'n_batches-1' larger than the other batches)
+    Batch all of the given data into <n_batches> and yield them as an
+    iterator the data as list of data. The last batch is the largest 
+    if the number of samples is not integer divisible by 'n_batches' 
+    (the last batch is at most 'n_batches-1' larger than the other batches)
     Also enables a stochastic chosing of the training samples by ommiting
     different random samples each epoch
     Parameters:
@@ -554,27 +552,71 @@ def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0):
     stochastic:     float, default 0.5
                     if the data should be stochastically picked, has to be <=1
                     only available if <shuffle> is True
-    Yields:
+    x_extra:        numpy array or list of arrays, default None
+                    additional input data, asserts that len(x) == len( x_extra)
+    y_extra:        numpy array, default None
+                    additional output data
+    **kwargs:       kwargs
+                    only here to catch older verions, no functionality given
+    Returns:
     -------
-    x_batch         numpy array
-                    batched input data
-    y_batch         numpy array
-                    batched output data
+    data_batches    list
+                    list of (x_batch, y_batch, 'x_extra, y_extra') pairs
+                    if x_extra and y_extra are given
     """
+    ## input preprocessing and variale allocation
+    if x_extra is not None and len( x_extra) == 1:
+        x_extra = x_extra[0]
     n_samples = y.shape[0]
-    if shuffle:
-        permutation = np.random.permutation( n_samples )
-        x = x[ permutation]
-        y = y[ permutation]
-    else:
-        stochastic = 0
     batchsize = int( n_samples // n_batches * (1-stochastic) )
     max_sample = int( n_samples* (1-stochastic) )
-    i = -1 #to catch errors for n_batches == 1
-    if factory:
-        for i in range( n_batches-1):
-            yield x[i*batchsize:(i+1)*batchsize], y[i*batchsize:(i+1)*batchsize]
-        yield x[(i+1)*batchsize:max_sample ], y[(i+1)*batchsize:max_sample ]
+    #i = -1 #to catch errors for n_batches == 1
+    jj = 0
+    batches = []
+    ## shuffle all samples if asked for
+    if shuffle:
+        permutation = np.random.permutation( n_samples )
+        x = permute( x, permutation)
+        y = permute( y, permutation)
+        if isinstance( x_extra, (list, tuple)):
+          for i in range( len( x_extra) ):
+            x_extra[i] = permute( x_extra[i], permutation)
+        elif x_extra is not None:
+            x_extra =  permute( x_extra, permutation)
+        if y_extra is not None:
+            y_extra = permute( y_extra, permutation)
+    else:
+        stochastic = 0
+
+    ## slice out the batches and put them into lists
+    for i in range( n_batches-1):
+        current_batch = []
+        ii = i*batchsize
+        jj = (i+1)*batchsize
+        current_batch.extend( ( x[ii:jj], y[ii:jj] ) )
+        if isinstance( x_extra, (list, tuple)):
+          extra_batches = [] 
+          for i in range( len( x_extra) ):
+            extra_batches.append( x_extra[i][ii:jj] )
+          current_batch.extend( extra_batches )
+        elif x_extra is not None:
+            current_batch.append( x_extra[ii:jj] )
+        if y_extra is not None:
+            current_batch.append( y_extra[ii:jj] )
+        yield current_batch
+    ## last batch, take the remaining samples 
+    current_batch = []
+    current_batch.extend( ( x[ jj:max_sample ], y[jj:max_sample ] ))
+    if isinstance( x_extra, (list, tuple)):
+      extra_batches = [] 
+      for i in range( len( x_extra) ):
+        extra_batches.append( x_extra[i][jj:max_sample] )
+      current_batch.extend( extra_batches )
+    elif x_extra is not None:
+        current_batch.append( x_extra[ jj:max_sample ] )
+    if y_extra is not None: 
+        current_batch.append( y_extra[jj:max_sample ] )
+    yield current_batch
 
 
 def compute_error( true_value, predictions, scaling=None, convertScale=False, metric='mse'):
@@ -603,7 +645,7 @@ def compute_error( true_value, predictions, scaling=None, convertScale=False, me
         error = np.square(np.subtract(true_value, predictions)).mean() 
     return error
 
-def roll_images( images, part=0.5, shuffle=False, inplace=True):
+def roll_images( images, part=0.5):
     """
     ## Note that this function is executed on the CPU with numpy. In 
     tf_functions there exists an identical function which is gpu compatible##
@@ -620,35 +662,22 @@ def roll_images( images, part=0.5, shuffle=False, inplace=True):
     part:       float, default 0.5
                 what proportion of the randomly selected images should
                 be rolled
-    shuffle:    bool, default False
-                if the data should be shuffled during rolling
-    inplace:    bool, default True
-                if the images should changed in place or a new array allocated
     Returns:
     --------
-    images:     tensorflow.tensor
-                images with randomly selected <part> randomly rolled
+    None:       each array in data will be changed in place
     """
-    n_images = images.shape[0]
-    n_roll = int( n_images*part )
-    img_dim = images.shape[1:3]
+    data = [data] if not isinstance( data, list) else data
+    n_images = data[0].shape[0]
+    n_roll   = int( n_images*part )
+    img_dim  = data[0].shape[1:3]
     max_roll = min( img_dim)
-    indices = np.random.permutation( n_images )
-    roll = np.random.randint( 0, max_roll, size=(n_roll, len(img_dim) ))
-    if not inplace:
-        rolled_images = np.zeros( images.shape)
-        for i in range( n_roll):
-            rolled_images[i] = np.roll( images[indices[i]], roll[i], axis=[0,1] ) 
-        rolled_images[n_roll:] = images[indices[n_roll:] ]
-        if shuffle is False:
-            rolled_images = rolled_images[np.argsort( indices)]
-        return rolled_images
-    else:
-        for i, j in zip( indices[:n_roll], range(n_roll) ):
-            images[i] = np.roll( images[i], roll[j], axis=[0,1] ) 
-        if shuffle:
-            images[:] = images[indices] 
-        return images
+    indices  = np.random.permutation( np.arange( n_images))[:n_roll]
+    roll     = np.random.uniform( 0, max_roll, size=(n_roll, len(img_dim) ))
+    j = 0
+    for i in indices:
+        for x in data:
+            x[i] = np.roll( x[i], roll[j], axis=[0,1] ) 
+        j += 1
 
 
 
