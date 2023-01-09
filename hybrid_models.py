@@ -9,7 +9,7 @@ from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
 import tf_functions as tfun
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from other_functions import Cycler, tic, toc
 
 
@@ -73,7 +73,7 @@ class VolBypass( Model):
 
 
   ##### pretraining and layer freezing #####
-  def pretrain_section( self, x_train, y_train, x_valid=None, y_valid=None,  predictor=None, **kwargs ):
+  def pretrain_section( self, train_data, valid_data=None,  predictor=None, **kwargs ):
     """
     NOTE: before calling this function the model has to be called that
     it is precompiled. Otherwise no training happens.
@@ -86,15 +86,15 @@ class VolBypass( Model):
     It assumes that x_train[1] is images.
     Parameters:
     -----------
-    x/y_train:  list of torch.tensor or numpy array
-                training_data given in lists such that predictor( *x_train) works
-    x/y_valid:  list of torch.tensor or numpy array, default None
-                validation data 
-    n_batches:  int, default 25
-                how many batches to batch the data into
+    train_data: list of tf.tensors or numpy arrays
+                training data of the form [*inputs, outputs]
+    valid_data: list of torch.tensor or numpy array, default None
+                validation data of the form [*inputs, outputs]
     predictor:  method of self, default self.call
                 method to predict specific parts of the model
     **kwargs with default arguments:
+    n_batches:      int, default 30
+                    how many batches to batch the data into
     roll_images:    bool, default False
                     roll the input data, only makes sense if x_train[i] is images
     n_epochs:       int, default 20000
@@ -115,9 +115,9 @@ class VolBypass( Model):
     if predictor is None:
         predictor = self.call
     if roll_images:
-        roll_idx = [x.ndim for x in x_train].index( 4) 
-    x_train = [x_train] if not isinstance( x_train, (list,tuple)) else x_train
-    x_valid = [x_valid] if not isinstance( x_valid, (list,tuple)) and x_valid is not None else x_valid
+        roll_idx = [x.ndim for x in train_data].index( 4) 
+    # data allocations
+    y_valid = valid_data.pop(-1) if valid_data is not None else None
 
     ## allocation of hardwired default parameters
     roll_interval       = 10 
@@ -137,19 +137,18 @@ class VolBypass( Model):
     print( '### starting training for {} ###'.format( predictor.__name__ ) )
     for i in range( n_epochs):
       if roll_images and ((i+1) % roll_interval == 0 ):
-          x_train[roll_idx] = get.roll_images( x_train[roll_idx]  )
+          get.roll_images( train_data[roll_idx]  )
       ## predict the training data data
-      batched_data = get.batch_data( x_train[0], y_train, n_batches, x_extra=x_train[1:] )
-      for batch in batched_data:
-         y_batch = batch.pop(1)
+      for batch in get.batch_generator( n_batches, train_data ):
+         y_batch = batch.pop(-1)
          with tf.GradientTape() as tape:
             y_pred     = predictor( *batch, training=True)
             train_loss = loss( y_batch, y_pred )
          gradients = tape.gradient( train_loss, trainable_variables)
          optimizer.apply_gradients( zip(gradients, trainable_variables) )
       ## predict the validation data
-      if not (x_valid is None and y_valid is None):
-        y_pred = self.batched_partial_prediction( valid_batches, predictor, *x_valid )
+      if y_valid is not None:
+        y_pred = self.batched_partial_prediction( valid_batches, predictor, *valid_data )
         valid_loss.append( loss( y_valid, y_pred).numpy() ) 
         ## epoch post processing
         if valid_loss[-1] < valid_loss[best_epoch]:
@@ -164,8 +163,9 @@ class VolBypass( Model):
           print( 'current partial val loss:  {:.6f}  vs best  {:.6f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
           tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True ) 
     ## restore the best model
-    if not (x_valid is None and y_valid is None):
+    if y_valid is not None:
         checkpoint.restore( checkpoint_manager.latest_checkpoint)
+        valid_data.append( y_valid) #put it back into list (inplace operations)
     return valid_loss
 
 
@@ -480,7 +480,7 @@ class DecoupledFeatures( DualInception):
     if not extra_features and self.vol_slice.stop == 2:
         extra_features = [ tf.reshape( features[:,1], (-1,1) ) ]
     # predict the volume fraction, features
-    x_vol      = self.predict_vol( features, extra_features, training=training)
+    x_vol      = self.predict_vol( features, training=training)
     x_features = self.predict_features( features, training=training)
     # predict cnn
     x_cnn = self.extract_features( images, extra_features=extra_features, training=training )
@@ -510,7 +510,7 @@ class VariableContrast( DecoupledFeatures):
     layers just before the last layer
     """
     # predict the volume fraction, features
-    x_vol      = self.predict_vol( features, extra_features=extra_features, training=training)
+    x_vol      = self.predict_vol( features, training=training)
     x_features = self.predict_features( features, training=training)
     # predict cnn
     x_cnn = self.extract_features( images, training=training )

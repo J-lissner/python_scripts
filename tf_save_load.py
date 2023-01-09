@@ -184,16 +184,22 @@ class Saver():
         None:       dumps a zip archive into the specified folder 
         """
         codefile = ZipFile( '{}/appended_code.zip'.format( self.savepath), 'w' )
+        not_found = []
+        default_found = []
         for code in args:
             if code[-3:] != '.py':
                 code += '.py'
             if os.path.isfile( code):
                 codefile.write( code )
             elif os.path.isfile( self.script_path + code):
-                print( 'file "{}" not found locally, but was found and taken from default script path'.format( code ) )
+                default_found.append( code)
                 codefile.write( self.script_path + code )
             else:
-                print( 'WARNING: Following script to save has not been found: {}\n , might lead to issues when trying to reload the model'.format( code) )
+                not_found.append( code)
+        if default_found:
+            print( f'file(s) "{default_found}" not found locally, however found and taken from default script path: {self.script_path}' )
+        if not_found:
+            print( f'WARNING: Following script to save has not been found: {not_found}\n , might lead to issues when trying to reload the model' )
         codefile.close()
 
 

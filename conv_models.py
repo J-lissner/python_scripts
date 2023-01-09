@@ -5,7 +5,8 @@ from tensorflow.math import ceil
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, InceptionModule
+#from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, InceptionModule
+from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, InceptionModule
 from hybrid_models import VolBypass
 from my_models import Model
 
@@ -258,6 +259,8 @@ class CnnBypass( OnlyCnn, VolBypass):
 
   def call(self, images, vol=None, training=False, *args, **kwargs):
     """ full prediction of the model, compute the volume fraction if not given"""
+    if images.ndim < 4 and vol is not None:
+        vol, images = images, vol
     if vol is None: 
         vol = tf.reshape( tf.reduce_mean( images, axis=[1,2,3] ), (-1, 1) )
     x_vol = self.predict_vol( vol, training=training )

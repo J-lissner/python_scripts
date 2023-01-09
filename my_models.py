@@ -1,9 +1,9 @@
 import tensorflow as tf
 import numpy as np
-import itertools
 from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, concatenate
+from other_functions import Cycler
 import data_processing as get
 
 
@@ -77,15 +77,13 @@ class Model( Model):
 
   ## call and shadows of call
   def call(self, x, training=False, *args, **kwargs):
-      if training is False:
-        if False: #TODO: implement the scaling when not training, seems real nice
+      if training is False and False:#TODO: implement the scaling when not training, seems real nice
           x = get.scale_with_shifts( x, self.input_scaling )
           #and then below
-          x = get.unscale_data( x, self.output_scaling) 
+    
       for layer in self.architecture:
           x = layer( x, training=training)
-    
-      if training is False:
+      if training is False and False:
           x = get.unscale_data( x, self.output_scaling) 
       return x
 
@@ -138,7 +136,7 @@ class ForwardNormalization( Model):
                        and is specified per layer 
         """
         super(ForwardNormalization, self).__init__( n_output)
-        activation = itertools.cycle( activation)
+        activation = Cycler( activation)
         self.architecture = []
         model = self.architecture
         for i in range( len(hidden_neurons) ):

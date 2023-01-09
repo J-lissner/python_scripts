@@ -531,119 +531,50 @@ def augment_periodic_images( images, y, augmentation=0.5, multi_roll=2, x_extra=
         return images, y
 
 
-def batch_generator( x, y, n_batches, shuffle=True, stochastic=0.0, x_extra=None, y_extra=None, **kwargs):
+def batch_generator( n_batches, data, shuffle=True):
     """
-    Batch all of the given data into <n_batches> and yield them as an
-    iterator the data as list of data. The last batch is the largest 
-    if the number of samples is not integer divisible by 'n_batches' 
+    Generator/Factory function, yields 'n_batches' batches when called in a for loop
+    The last batch is the largest if the number of samples is not integer divisible by 'n_batches'
     (the last batch is at most 'n_batches-1' larger than the other batches)
-    Also enables a stochastic chosing of the training samples by ommiting
-    different random samples each epoch
-    Parameters:
-    -----------
-    x:              numpy array
-                    input data aranged row wise
-    y:              numpy array
-                    output data/target values aranged row wise
-    n_batches:      int
+    things as i want
+    Parameters
+    ----------
+    n_batches       int
                     number of batches to return
-    shuffle:        bool, default True
-                    If the data should be shuffled before batching
-    stochastic:     float, default 0.5
-                    if the data should be stochastically picked, has to be <=1
-                    only available if <shuffle> is True
-    x_extra:        numpy array or list of arrays, default None
-                    additional input data, asserts that len(x) == len( x_extra)
-    y_extra:        numpy array, default None
-                    additional output data
-    **kwargs:       kwargs
-                    only here to catch older verions, no functionality given
-    Returns:
+    data:           list of tensorflow.tensors
+                    Tensorflow tensors which should be batched
+    shuffle         bool, default True
+                    If the data should be shuffled during batching
+    Yields:
     -------
-    data_batches    list
-                    list of (x_batch, y_batch, 'x_extra, y_extra') pairs
-                    if x_extra and y_extra are given
+    batches:        tuple of tensorflow tensors
+                    all of the tensors batched as in given order 
     """
-    ## input preprocessing and variale allocation
-    if x_extra is not None and len( x_extra) == 1:
-        x_extra = x_extra[0]
-    n_samples = y.shape[0]
-    batchsize = int( n_samples // n_batches * (1-stochastic) )
-    max_sample = int( n_samples* (1-stochastic) )
-    #i = -1 #to catch errors for n_batches == 1
-    jj = 0
-    batches = []
-    ## shuffle all samples if asked for
+    n_samples = data[-1].shape[0]
     if shuffle:
-        permutation = np.random.permutation( n_samples )
-        x = permute( x, permutation)
-        y = permute( y, permutation)
-        if isinstance( x_extra, (list, tuple)):
-          for i in range( len( x_extra) ):
-            x_extra[i] = permute( x_extra[i], permutation)
-        elif x_extra is not None:
-            x_extra =  permute( x_extra, permutation)
-        if y_extra is not None:
-            y_extra = permute( y_extra, permutation)
+        permutation = np.random.permutation( n_samples)
     else:
-        stochastic = 0
-
-    ## slice out the batches and put them into lists
+        permutation = np.arange( n_samples)
+    batchsize = int( n_samples// n_batches)
+    i         = -1 # set a value that for n_batches=1 it does return the whole set
     for i in range( n_batches-1):
-        current_batch = []
-        ii = i*batchsize
-        jj = (i+1)*batchsize
-        current_batch.extend( ( x[ii:jj], y[ii:jj] ) )
-        if isinstance( x_extra, (list, tuple)):
-          extra_batches = [] 
-          for i in range( len( x_extra) ):
-            extra_batches.append( x_extra[i][ii:jj] )
-          current_batch.extend( extra_batches )
-        elif x_extra is not None:
-            current_batch.append( x_extra[ii:jj] )
-        if y_extra is not None:
-            current_batch.append( y_extra[ii:jj] )
-        yield current_batch
-    ## last batch, take the remaining samples 
-    current_batch = []
-    current_batch.extend( ( x[ jj:max_sample ], y[jj:max_sample ] ))
-    if isinstance( x_extra, (list, tuple)):
-      extra_batches = [] 
-      for i in range( len( x_extra) ):
-        extra_batches.append( x_extra[i][jj:max_sample] )
-      current_batch.extend( extra_batches )
-    elif x_extra is not None:
-        current_batch.append( x_extra[ jj:max_sample ] )
-    if y_extra is not None: 
-        current_batch.append( y_extra[jj:max_sample ] )
-    yield current_batch
+        idx   = permutation[i*batchsize:(i+1)*batchsize]
+        batch = []
+        for x in data:
+            if 'tensorflow' in sys.modules and isinstance( x, (tf.Tensor, tf.Variable) ):
+                batch.append( tf.gather( x, idx) )
+            else: #its a numpy array
+                batch.append( np.take( x, idx, axis=0) )
+        yield batch
+    idx   = permutation[(i+1)*batchsize:]
+    batch = []
+    for x in data:
+        if 'tensorflow' in sys.modules and isinstance( x, (tf.Tensor, tf.Variable) ):
+            batch.append( tf.gather( x, idx) )
+        else: #its a numpy array
+            batch.append( np.take( x, idx, axis=0) )
+    yield batch
 
-
-def compute_error( true_value, predictions, scaling=None, convertScale=False, metric='mse'):
-    """
-    Compute the error between true value and predictions based on 
-    specified metric with/without scaling back to the real scale 
-    INPUT(s):
-        true_value      : array of scaled true_value
-        predictions     : array of scaled predictions (or prediction means for bayesian NN)
-        convertScale    : boolean indicating whether the values are to be scaled to the real scale
-        scaling         : list with scaling info from data_processing.scale_data()
-        metric          : metric to be used to compute the error
-                            (a) 'mse' : Mean Squared Error
-                            (b)
-                            (c)
-    OUTPUT(s):
-        error           : scalar error value
-    # TODO rewrite a few things here
-    """
-    # Scaling back to the real scale
-    if convertScale:
-        true_value  = get.unscale_data(true_value,  scaling)
-        predictions = get.unscale_data(predictions, scaling)
-    # Computing error based on the metric
-    if metric=='mse':
-        error = np.square(np.subtract(true_value, predictions)).mean() 
-    return error
 
 def roll_images( images, part=0.5):
     """

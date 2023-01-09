@@ -88,6 +88,8 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
         Set some generic default learnrate to be callable below
         """
         self.learnrate = 1e-3
+        self.phase = 0
+        self.allow_convergence = True
 
     ## methods to reference internal variables for other methods
     def reference_optimizer( self, optimizer):
@@ -149,7 +151,7 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
           lower_part     = sum([ np.abs( 2*x - y - z ).sum() for x,y,z in zip( params[1], params[0], params[2] )] )
           self.max_lr    = self.learnrate * upper_part/lower_part
           self.learnrate = max( self.learnrate, self.max_lr/self.jump )
-              print( f'adjusting learning rate to be {self.learnrate}, maximum found={self.max_lr}' )
+          print( f'adjusting learning rate to be {self.learnrate}, maximum found={self.max_lr}' )
           del self.model_parameters, params, self.model
           return self.max_lr
 
