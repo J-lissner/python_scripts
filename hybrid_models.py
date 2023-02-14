@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import tensorflow_addons as tfa
 from datetime import datetime
 from tensorflow.math import ceil
 from my_models import Model #from tensorflow.keras import Model
@@ -9,6 +10,7 @@ from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
 import data_processing as get
 import tf_functions as tfun
+import learner_functions as learn
 from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from other_functions import Cycler, tic, toc
 
@@ -93,6 +95,8 @@ class VolBypass( Model):
     predictor:  method of self, default self.call
                 method to predict specific parts of the model
     **kwargs with default arguments:
+    learning_rate:  str, default 'constant'
+                    if my schedule or a constant learning rate should be used 
     n_batches:      int, default 30
                     how many batches to batch the data into
     roll_images:    bool, default False
@@ -107,8 +111,9 @@ class VolBypass( Model):
                 loss of valid data if given. gives the loss of partial ann
     """
     ## input preprocessing and default kwargs
-    roll_images    = kwargs.pop( 'roll_images', False)
+    learning_rate  = kwargs.pop( 'learning_rate', 'constant')
     n_epochs       = kwargs.pop( 'n_epochs', 20000)
+    roll_images    = kwargs.pop( 'roll_images', False)
     n_batches      = kwargs.pop( 'n_batches', 30)
     valid_batches  = kwargs.pop( 'valid_batches', 1)
     stopping_delay = kwargs.pop( 'stopping_delay', 50) 
@@ -121,8 +126,16 @@ class VolBypass( Model):
 
     ## allocation of hardwired default parameters
     roll_interval       = 10 
-    learning_rate       = 0.05 
-    optimizer           = tf.keras.optimizers.Adam( learning_rate=learning_rate) 
+    if learning_rate == 'constant':
+        plateau_threshold   = 1
+        learning_rate       = 0.05 
+        optimizer           = tf.keras.optimizers.Adam( learning_rate=learning_rate) 
+    else:
+        plateau_threshold = 0.93
+        learning_rate = learn.RemoteLR()
+        optimizer = tfa.optimizers.AdamW( learning_rate=learning_rate, weight_decay=1e-4, beta_1=0.8, beta_2=0.85)
+        learning_rate.reference_optimizer( optimizer)
+        learning_rate.reference_model( self)
     loss                = tf.keras.losses.MeanSquaredError() 
     trainable_variables = self.trainable_variables 
     checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
@@ -130,6 +143,7 @@ class VolBypass( Model):
     checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
     valid_loss          = []
     best_epoch          = 0
+    plateau_loss        = 1e5
     overfit             = 1
     debug_interval      = 15
     ## training until convergence or for n_epochs
@@ -137,9 +151,9 @@ class VolBypass( Model):
     print( '### starting training for {} ###'.format( predictor.__name__ ) )
     for i in range( n_epochs):
       if roll_images and ((i+1) % roll_interval == 0 ):
-          get.roll_images( train_data[roll_idx]  )
+          tfun.roll_images( train_data[roll_idx]  )
       ## predict the training data data
-      for batch in get.batch_generator( n_batches, train_data ):
+      for batch in tfun.batch_data( n_batches, train_data ):
          y_batch = batch.pop(-1)
          with tf.GradientTape() as tape:
             y_pred     = predictor( *batch, training=True)
@@ -151,13 +165,18 @@ class VolBypass( Model):
         y_pred = self.batched_partial_prediction( valid_batches, predictor, *valid_data )
         valid_loss.append( loss( y_valid, y_pred).numpy() ) 
         ## epoch post processing
-        if valid_loss[-1] < valid_loss[best_epoch]:
+        if valid_loss[-1] < plateau_loss:
+          plateau_loss = plateau_threshold * valid_loss[-1]
           checkpoint_manager.save() 
           best_epoch = i
           overfit    = 0
         overfit += 1
       if overfit == stopping_delay:
-          break
+          if learn.is_slashable( learning_rate) and not learning_rate.allow_stopping:
+              learning_rate.slash()
+              overfit = 0
+          else:
+              break
       if (i+1) % debug_interval == 0:
           toc( '{}: {} additional epochs'.format( predictor.__name__, debug_interval) )
           print( 'current partial val loss:  {:.6f}  vs best  {:.6f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
@@ -171,8 +190,10 @@ class VolBypass( Model):
 
   def freeze_feature_predictor( self, freeze=True):
     """ freeze or unfreeze the feature predictor """
-    for layer in self.feature_regressor:
+    try:
+      for layer in self.feature_regressor:
         layer.trainable = not freeze
+    except: pass
 
   def all_but_vol( self, freeze=True):
       """ freeze everything but the volume fraction bypass"""
@@ -441,7 +462,7 @@ class DualInception( VolBypass):
     return x
 
 
-  def call(self, x, vol=None, extra_features=[], training=False):
+  def call(self, images, vol=None, extra_features=[], training=False):
     """
     Predict the model outputs given the image inputs.
     If the volume fraction is precomputed, then it is not computed from
@@ -451,10 +472,12 @@ class DualInception( VolBypass):
     extra_features: list of tensor like
                     additional features to concatenate after convolution layers
     """
+    if images.ndim < 4 and vol is not None:
+        vol, images = images, vol
     if vol is None: 
-        vol = tf.reshape( tf.reduce_mean( x, axis=[1,2,3] ), (-1, 1) )
+        vol = tf.reshape( tf.reduce_mean( images, axis=[1,2,3] ), (-1, 1) )
     x_vol = self.predict_vol( vol, extra_features, training=training )
-    x     = self.predict_inception( x, extra_features=extra_features, training=training) 
+    x     = self.predict_inception( images, extra_features=extra_features, training=training) 
     return x + x_vol
 
 
