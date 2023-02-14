@@ -60,7 +60,8 @@ def slashable_lr():
 
 def is_slashable( lr_object):
     """ Directly return true or false if you can slahs your learning rate"""
-    return isinstance( lr_object, slashable_lr())
+    custom_lrs = slashable_lr()
+    return isinstance( lr_object, custom_lrs) or (lr_object in custom_lrs )
 
 thetas = []
 def estimate_max_lr( model, learnrate):
@@ -151,7 +152,7 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
           lower_part     = sum([ np.abs( 2*x - y - z ).sum() for x,y,z in zip( params[1], params[0], params[2] )] )
           self.max_lr    = self.learnrate * upper_part/lower_part
           self.learnrate = max( self.learnrate, self.max_lr/self.jump )
-          print( f'adjusting learning rate to be {self.learnrate}, maximum found={self.max_lr}' )
+          print( f'adjusting learning rate={self.learnrate:1.3e}, maximum found={self.max_lr:1.3e}' )
           del self.model_parameters, params, self.model
           return self.max_lr
 
@@ -170,11 +171,14 @@ class RemoteLR(LRSchedules):
     """ this is a LR which will be affected mostly by remote operations 
     the max learning rate will be estimated during runtime learning and 
     adjusted accordingly
-    first it will be constant until plateau, then there will be 2 up jumps
+    first it will be constant until plateau, then there will be 1 up jumps
     with a fixed amount of steps and thereafter downsteps whenever it 
     plateaus"""
-    def __init__( self, n_steps=50, base_lr=1e-3, jump=10**0.5, n_up=0, n_down=3 ):
+    def __init__( self, n_steps=50, base_lr=1e-3, jump=5, n_up=1, n_down=3 ):
         """
+        Note that the results were pretty dependent on the weight decay
+        from adamW, it performed significantly more reliable for a decay
+        of 1e-4
         Parameters:
         -----------
         n_steps:        int, default 50
@@ -187,7 +191,7 @@ class RemoteLR(LRSchedules):
         n_up:           int, default 0
                         How many times the learning rate should jump up, 
                         If the number is larger than 1 it will exceed 'max_lr'
-        jump:           float, default 10**0.5
+        jump:           float, default 5
                         how big each jump should be
         n_down:         int, default 3
                         how often the learning rate should be decreased by jump

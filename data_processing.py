@@ -576,7 +576,7 @@ def batch_generator( n_batches, data, shuffle=True):
     yield batch
 
 
-def roll_images( images, part=0.5):
+def roll_images( data, part=0.5):
     """
     ## Note that this function is executed on the CPU with numpy. In 
     tf_functions there exists an identical function which is gpu compatible##
@@ -588,8 +588,8 @@ def roll_images( images, part=0.5):
     due to this procedure)
     Parameters:
     -----------
-    images:     numpy nd-array
-                image data of shape (n_samples, n_1, n_2, n_channels)
+    data:       list of numpy nd-array
+                multiple data sets aranged row wise in tensorflow notation
     part:       float, default 0.5
                 what proportion of the randomly selected images should
                 be rolled

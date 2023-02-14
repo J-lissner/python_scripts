@@ -6,6 +6,7 @@ from math import ceil, floor
 import learner_functions as learn
 
 from timers import tic, toc
+from learner_functions import relative_mse, train_step #backward compability
 
 ## generally usable functions 
 def train_model( model, data, valid_data, savepath=None, best_loss=1, call=None, image_idx=None, *call_args, **call_kwargs):
@@ -262,4 +263,3 @@ def roll_images( data, part=0.5):
         j += 1
 
 
-from learner_functions import relative_mse, train_step #for now to ensure backward compability

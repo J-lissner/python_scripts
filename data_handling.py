@@ -121,7 +121,7 @@ class MultiSetBatcher():
         for i in range(n):
             pick = np.random.uniform(0, sum( sample_weights ))
             j    = 1
-            if pick <= draw_weights[0] and draw_weights[0] ! = 0:
+            if pick <= draw_weights[0] and draw_weights[0] != 0:
                 choices[i] = 0
             while choices[i] is None:
                 if draw_weights[j-1] < pick <= draw_weights[j]:

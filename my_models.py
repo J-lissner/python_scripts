@@ -25,15 +25,15 @@ class Model( Model):
       self.architecture = []
 
 
-  def batched_prediction( self, n_batches, *inputs, **kwargs):
+  def batched_prediction( self, batchsize, *inputs, **kwargs):
       """
       predict the given data in batches and return the prediction
       takes variable inputs because this method is inherited to more
       complicated models.
       Parameters:
       -----------
-      n_batches:  int
-                  how many batches to split the input data into
+      batchsize:  int
+                  how large the batches should be
       *inputs:    list of tf.tensor like
                   input data to predict
       **kwargs:   other keyworded options for the call,
@@ -43,10 +43,12 @@ class Model( Model):
       prediction: tensorflow.tensor
                   prediction of the model when using self.call()
       """
+      n_batches =  int(inputs[0].shape[0]// batchsize)
       if n_batches == 1:
           return self( *inputs, **kwargs)
       prediction = []
       n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
+      jj = 0 #to catch 1 batch
       for i in range( n_batches-1):
           ii = i* n_samples//n_batches
           jj = (i+1)* n_samples//n_batches
@@ -96,18 +98,24 @@ class Model( Model):
 
 
 class RegularizedDense(Model):
-    def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None, batch_norm=False): #maybe do even "regularizer as input"
+    def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None, batch_norm=False, **regularization): #maybe do even "regularizer as input"
+        """
+        **regularization is the regularization options which are simply piped into the
+        dense layers from keras, defaults to None
+        Originally i had these options lying around:
+        kernel_regularizer='l2', kernel_initializer='he_normal'
+        """
         super(RegularizedDense, self).__init__(n_output)
-        self.architecture = [ Dense( n_neuron[0], activation=activation[0] , kernel_regularizer='l2', kernel_initializer='he_normal')]
+        activation = Cycler( activation)
+        self.architecture = [ Dense( n_neuron[0], activation=next(activation), **regularization)]
         model = self.architecture
-        for i in range( 1, len(n_neuron) ): 
+        for i in range( 1, len(n_neuron) ):
             if dropout:
                 model.append( Dropout( dropout) )
             if batch_norm is True:
                 model.append( BatchNormalization() )
-
-            model.append( Dense( n_neuron[i], activation=activation[i] , kernel_regularizer='l2', kernel_initializer='he_normal')  )
-        model.append( Dense(n_output, activation=None, kernel_regularizer='l2', kernel_initializer='he_uniform') )
+            model.append( Dense( n_neuron[i], activation=next(activation) , **regularization)  )
+        model.append( Dense(n_output, activation=None, **regularization) )
 
 
 
