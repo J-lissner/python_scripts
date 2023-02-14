@@ -239,6 +239,10 @@ class RemoteLR(LRSchedules):
             self.phase += 1
             self.reset_optimizer()
             self.learnrate /= self.jump
+            try: 
+                self.optimizer.weight_decay = self.optimizer.weight_decay / 10**0.5
+            except: pass
+
             if self.phase == (self.n_up + self.n_down):
                 print( 'now enabling early stopping switch' )
                 self.allow_stopping = True #finally enable stopping of the training
