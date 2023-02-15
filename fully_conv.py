@@ -124,7 +124,6 @@ class MultilevelNet( ABC):
     optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=1e-4, beta_1=0.85, beta_2=0.90  ) )
     plateau_threshold = kwargs.pop( 'plateau_threshold', 0.93 )
     ## other twiddle parameters
-    stopping_increment = 0 #slightly increase the stopping delay after each LR adjustment
     debug_counter = 15
     optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
@@ -200,8 +199,7 @@ class MultilevelNet( ABC):
       if overfit == stopping_delay:
           if learn.is_slashable( learning_rate ) and not learning_rate.allow_stopping:
             learning_rate.slash()
-            stopping_delay += stopping_increment
-            overfit = 0
+            overfit = overfit // 1.5 #dont fully reset it, but give the model some time
             continue
           break
     toc( f'trained level {level}')
@@ -217,9 +215,8 @@ class MultilevelNet( ABC):
 
 class SlimNet( Model, MultilevelNet):
   """ 
-  basically the same as the DoubleUNet below, just with the new implementation for
-  testing purposes
-  The model itself is not really slim its only the code
+  Clean implementation of the unet, cohesive building blocks 
+  and slim evaluation scheme (code wise)
   """
   def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **kwargs):
     """ 
@@ -237,7 +234,7 @@ class SlimNet( Model, MultilevelNet):
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level: n_channels * max( 1, (level+1)//2 )
+        channel_function = lambda level: int( n_channels * max( 1, (level+2)/2 ) )
     self.n_levels = n_levels
     self.down_path = []
     self.up_path = []
@@ -278,19 +275,21 @@ class SlimNet( Model, MultilevelNet):
     ## now go up again (and store) the side prediction
     level_features = down_path.pop( -1)
     for i in range( len( self.side_predictors)):
-        prediction, feature_channels = self.side_predictors[i]( self.coarse_grainers[i]( images), 
-                                                              level_features, training=training ) 
-        if level is not False and i in level: #check if one should return thel evel
+        prediction, feature_channels = self.side_predictors[i]( self.coarse_grainers[i]( images), level_features, training=training ) 
+        ## conditional check on how to store/return current level
+        if level is not False and i in level: 
             predictions.append( prediction)
             if i == max( level):  
                 if len( level) == 1: return predictions[0]
                 else: return predictions
+        ## keep going up
         level_features = self.up_path[i]( down_path.pop( -1), feature_channels, prediction, training=training) 
     # level_features now concatenated all required channels
     if only_features: return level_features  #for finetuning training
     prediction = self.predictor( level_features, training=training )
-    if level is not False: 
-        predictions.append( prediction) #only way we are here is if the last level is requested
+    ## conditional check on how to handle return values
+    if level is not False:  #may only happen if last level requested
+        predictions.append( prediction) 
         if len( level) == 1: return predictions[0]
         else: return predictions
     return prediction 
@@ -335,23 +334,84 @@ class SlimNet( Model, MultilevelNet):
       self.predictor.freeze( freeze)
 
 
+class VVEnet( SlimNet):
+  """
+  Have a unet like structure which has two branches, a branch contributing
+  to the side predictions, and another branch which contains high level
+  features and does not need any side predictions
+  The branch without the side predictions has less channels and can not really
+  be trained levelwise
+  I will copy the exact same structure from above and take additionally 
+  the extra branch with the high level features
+  """
+  def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **kwargs):
+    """ 
+    Parameters:
+    -----------
+    n_out:              int,
+                        number of feature maps to predict
+    n_levels:           int, default 4
+                        number of times to downsample (input & prediction)
+    n_channels:         int, default 6
+                        number of channels (constant) in each level 
+    channel_function:   lambda function, default None
+                        how to increase the channels in each level, defaults
+                        to: lambda( level): n_channels * max( 1, (level+1)//2 )
+    """
+    ## super builds the lower predictive branch
+    super().__init__( n_out, n_levels, n_channels, channel_function, *args, **kwargs)
+    self.enable = False #disable the double structure at first
+    if channel_function is None:
+        channel_function = lambda level: int( n_channels * max( 1, (level+2)/2 ) )
+    level_channels = [ channel_function( x) for x in range( n_levels)]
+    self.direct_down = LayerWrapper()
+    self.direct_up = LayerWrapper()
+    self.extra_predictor = LayerWrapper() #3*conv 3x3, then 1x1
+    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
+    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
+    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
+    self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
+    for i in range( n_levels):
+        self.direct_down.append( DownwardEncoder( level_channels[i] ) )
+        self.direct_up.append( UpwardEncoder( level_channels[-1-i] ) )
+
+  ## specific functions for this network layout
+  def enable_double( self, enable=True):
+    """ enable the switch which makes the high level features contribute """
+    self.enabled = enable
+
+  def high_level_prediction( self, images, training=training):
+    for layer in self.direct_down:
+        images = layer( images, training=training)
+    for layer in self.direct_up:
+        images = layer( images, training=training)
+    return self.extra_predictor( images)
+
+
+  # abstractmethods
+  def predictor_features( self, images, *args, **kwargs):
+  def freeze_predictor( self, freeze=False):
+  def freeze_upto( self, freeze_limit, freeze=True):
+
+  # other required methods
+  def call( self, images, level=False, training=False, *layer_args, **layer_kwargs ):
+      #super().call() #basically
+      if self.enable:
+          prediction = prediction + self.high_level_prediction( images, training=training)
+      return prediction
+
 
 
 
 
 ## here i simply define fully convolutional neural networks 
-class DoubleUNet(Model, MultilevelNet):
-
+class DoubleUNet(Model, MultilevelNet): 
     ## so i always need to store everything on the downscaling and then i concatenate,
     ## and from the lowest layer upward i can free memory
     ## -> i should do only the 3x3 and store it everywhere
     ## -> and the averagepool + 5x5 only when i am at current layer
-    ## for now i will assume that the average pooling is a free gift and i do not need
-    ## to pool by 2x2x2x2, but can do 8 -> 4- > 2 (ah wait, same amount of operations) 
     ## 'bugs' which i think persist here:
     ##  - the number of channels does not match on the upsampling operation
-    ##  - something which was intended to be an inception module is actually not
-    ##  - the downsampling in odd sized kernels might introduce gradient shift
   ### model building functions
   def __init__( self, n_out, n_levels=4, n_channels=4, loaded=False, *args, **kwargs):
     """

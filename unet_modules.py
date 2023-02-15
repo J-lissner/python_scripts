@@ -139,10 +139,13 @@ class SidePredictor( Layer):
 class Predictor( Layer):
   def __init__( self, n_out, *args, **kwargs):
     super().__init__( *args, **kwargs)
-    generic_inception = LayerWrapper( Conv2D( n_out, kernel_size=1, activation='selu'))
-    generic_inception.append( [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=3, activation='selu') ] )
-    generic_inception.append( [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=5, activation='selu')  ])
-    generic_inception.append( MaxPool2DPeriodic( 2, strides=1 ) ) #4 parallel convolutions, see if its better with 3
+    branch1 = [MaxPool2DPeriodic( 2, strides=1 ), Conv2D( n_out, kernel_size=1, activation='selu')]
+    branch2 = [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=3, activation='selu') ]
+    branch3 = [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=5, activation='selu')  ]
+    generic_inception = LayerWrapper()
+    generic_inception.append( branch1 )
+    generic_inception.append( branch2 )
+    generic_inception.append( branch3 )
     self.predictor = LayerWrapper()
     self.predictor.append( generic_inception)
     self.predictor.append( Concatenate() )
