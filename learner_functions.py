@@ -241,7 +241,9 @@ class RemoteLR(LRSchedules):
             self.learnrate /= self.jump
             try: 
                 self.optimizer.weight_decay = self.optimizer.weight_decay / 10**0.5
-            except: pass
+                print( 'decreasing weight decay' )
+            except: #pass
+                print( 'failed to decrease weight decay' )
 
             if self.phase == (self.n_up + self.n_down):
                 print( 'now enabling early stopping switch' )
