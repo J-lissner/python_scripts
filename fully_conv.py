@@ -237,7 +237,6 @@ class SlimNet( Model, MultilevelNet):
     super().__init__( *args, **kwargs)
     if channel_function is None:
         channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+3)/2 ) )
-        #channel_function = lambda level: int( n_channels * max( 1, (level+1)) )
     self.n_levels = n_levels
     self.down_path = []
     self.up_path = []
@@ -247,7 +246,7 @@ class SlimNet( Model, MultilevelNet):
     for i in range( n_levels):
         maxpool = False if i == 0 else True
         n_current = channel_function( i, n_channels)
-        n_upsample = channel_function( i-1, n_channels)
+        n_upsample = channel_function( i, n_channels)
         self.down_path.append( InceptionEncoder( n_current, maxpool=maxpool) ) #i am missing a 'maxpool=False' in layer 1
         self.up_path.append( FeatureConcatenator( n_upsample) )
         self.side_predictors.append( SidePredictor( n_current, n_out ) )
@@ -368,7 +367,7 @@ class VVEnet( SlimNet):
     ## super builds the lower predictive branch
     super().__init__( n_out, n_levels, n_channels, channel_function, *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+2)/2 ) )
+        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+3)/2 ) )
     level_channels = [ channel_function( x, n_channels) for x in range( n_levels)]
     n_conv = 3 #simply add this many operations to every thingy
     conv_layer = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, activation='selu')
