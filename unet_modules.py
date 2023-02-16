@@ -85,6 +85,7 @@ class SidePredictor( Layer):
     *args, **kwargs: input arguments passed to the parent __init__ method 
     """
     super().__init__( *args, **kwargs)
+    conv1x1 = lambda n: Conv2D( n, kernel_size=1, activation='selu' )
     inception_slim    = LayerWrapper()
     inception_slim.append( Conv2D( 1, kernel_size=1, activation=None)  ) #default stride is 1
     inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
@@ -93,15 +94,14 @@ class SidePredictor( Layer):
     self.cg_processor.append( inception_slim) #list inside list -> inception module
     self.cg_processor.append( Concatenate() )
     self.cg_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) )
-    #concatenate of upsampled and cg processor
+    #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
-    self.feature_processor.append( Conv2DPeriodic(  n_channels, kernel_size=3, activation='selu' ) )
-    self.feature_processor.append( Conv2DPeriodic(  n_channels, kernel_size=3, activation='selu' ) )
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
     inception_predictor    = LayerWrapper()
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu' ) )
     inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
-    self.side_predictor    = LayerWrapper( Concatenate() ) #channels and cg features
+    self.side_predictor = LayerWrapper( Concatenate() ) #channels and cg features
     self.side_predictor.append( inception_predictor )
     self.side_predictor.append( Concatenate() )
     self.side_predictor.append( Conv2D( n_out, kernel_size=1, activation=None ) )
@@ -166,6 +166,7 @@ class FeatureConcatenator( Layer):
   Also takes care of the upsampling of the lower resolution feature channels
   """
   def __init__( self, n_channels, *args, **kwargs):
+    """ n_channels is here the number of channels for the next level"""
     super().__init__( *args, **kwargs)
     self.prediction_upsampler = LayerWrapper( UpSampling2D()  )
     self.feature_upsampler = LayerWrapper()
@@ -201,6 +202,29 @@ class FeatureConcatenator( Layer):
     prediction       = [] if prediction is None else [self.prediction_upsampler( prediction, *layer_args, **layer_kwargs)]
     return concatenate( bypass_channels + feature_channels + prediction )
 
+class InceptionUpsampler( Layer):
+  """
+  Have an inception like conv2d transpose with periodic padding
+  has kernel size 2 and 4 to circumvent checkerboard pattern
+  """
+  def __init__( self, n_channels, *args, **kwargs): 
+    super().__init__( *args, **kwargs)
+    upsampler = LayerWrapper( Conv2DTransposePeriodic( n_channels, kernel_size=2, strides=2, activation='selu', padding='same', **kwargs) )
+    upsampler.append( Conv2DTransposePeriodic( n_channels, kernel_size=4, strides=2, activation='selu', padding='same', **kwargs) )
+    self.feature_upsampler = LayerWrapper()
+    self.feature_upsampler.append( upsampler )
+    self.feature_upsampler.append( Concatenate() )
+    self.feature_upsampler.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) ) 
+
+  def append( self, layer):
+      self.feature_upsampler.append( layer)
+
+  def __call__( self, images, *layer_args, **layer_kwargs):
+    return self.feature_upsampler( images, *layer_args, **layer_kwargs) 
+
+  def freeze( self, freeze=True):
+    self.feature_upsampler.freeze( freeze)
+
 
 class InceptionEncoder( Layer):
   """
@@ -219,9 +243,11 @@ class InceptionEncoder( Layer):
     self.downsamplers.append( Concatenate() )
     self.downsamplers.append( Conv2D( n_channels, kernel_size=1, activation='selu') )
 
+  def append( self, layer):
+    self.downsamplers.append( layer)
+
   def __call__( self, images, *layer_args, **layer_kwargs):
     return self.downsamplers( images, *layer_args, **layer_kwargs)
-
 
   def freeze( self, freeze=True):
     self.downsamplers.freeze( freeze)
