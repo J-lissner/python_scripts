@@ -15,7 +15,7 @@ import data_processing as get
 import tf_functions as tfun
 import learner_functions as learn
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
-from unet_modules import InceptionEncoder, FeatureConcatenator, SidePredictor, LayerWrapper, Predictor
+from unet_modules import InceptionEncoder, FeatureConcatenator, SidePredictor, LayerWrapper, Predictor, InceptionUpsampler
 from other_functions import Cycler, tic, toc
 
 
@@ -121,10 +121,10 @@ class MultilevelNet( ABC):
     loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
     n_batches = max( 1, train_data[0].shape[0] // batchsize )
     learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
-    optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=1e-4, beta_1=0.85, beta_2=0.90  ) )
+    optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=5e-4, beta_1=0.85, beta_2=0.90  ) )
     plateau_threshold = kwargs.pop( 'plateau_threshold', 0.93 )
     ## other twiddle parameters
-    debug_counter = 15
+    debug_counter = 25
     optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
     cost_function = tf.keras.losses.MeanSquaredError() #optimize with
     loss_metric   = tf.keras.losses.MeanSquaredError() #validate with 
@@ -199,7 +199,9 @@ class MultilevelNet( ABC):
       if overfit == stopping_delay:
           if learn.is_slashable( learning_rate ) and not learning_rate.allow_stopping:
             learning_rate.slash()
-            overfit = overfit // 1.5 #dont fully reset it, but give the model some time
+            plateau_loss = plateau_loss/plateau_threshold
+            plateau_threshold = 0.97 if learning_rate.allow_stopping else plateau_threshold
+            plateau_loss = plateau_loss*plateau_threshold
             continue
           break
     toc( f'trained level {level}')
@@ -218,7 +220,7 @@ class SlimNet( Model, MultilevelNet):
   Clean implementation of the unet, cohesive building blocks 
   and slim evaluation scheme (code wise)
   """
-  def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **kwargs):
+  def __init__( self, n_out, n_levels=4, n_channels=8, channel_function=None, *args, **kwargs):
     """ 
     Parameters:
     -----------
@@ -234,7 +236,8 @@ class SlimNet( Model, MultilevelNet):
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level: int( n_channels * max( 1, (level+2)/2 ) )
+        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+3)/2 ) )
+        #channel_function = lambda level: int( n_channels * max( 1, (level+1)) )
     self.n_levels = n_levels
     self.down_path = []
     self.up_path = []
@@ -242,10 +245,14 @@ class SlimNet( Model, MultilevelNet):
     ## have the branch which gives the side prediction, for now
     ## with constant channel amount
     for i in range( n_levels):
-        down_module = InceptionEncoder( n_channels)
-        self.down_path.append( down_module )
-        self.up_path.append( FeatureConcatenator( n_channels) )
-        self.side_predictors.append( SidePredictor( n_channels, n_out ) )
+        maxpool = False if i == 0 else True
+        n_current = channel_function( i, n_channels)
+        n_upsample = channel_function( i-1, n_channels)
+        self.down_path.append( InceptionEncoder( n_current, maxpool=maxpool) ) #i am missing a 'maxpool=False' in layer 1
+        self.up_path.append( FeatureConcatenator( n_upsample) )
+        self.side_predictors.append( SidePredictor( n_current, n_out ) )
+    self.up_path = self.up_path[::-1]
+    self.side_predictors = self.side_predictors[::-1]
     #predict via inception module
     self.predictor = Predictor( n_out)
     self.coarse_grainers = [ AvgPool2DPeriodic( 2**(i+1)) for i in range(n_levels)][::-1] #the average pooling layers are required here
@@ -360,45 +367,89 @@ class VVEnet( SlimNet):
     """
     ## super builds the lower predictive branch
     super().__init__( n_out, n_levels, n_channels, channel_function, *args, **kwargs)
-    self.enable = False #disable the double structure at first
     if channel_function is None:
-        channel_function = lambda level: int( n_channels * max( 1, (level+2)/2 ) )
-    level_channels = [ channel_function( x) for x in range( n_levels)]
+        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+2)/2 ) )
+    level_channels = [ channel_function( x, n_channels) for x in range( n_levels)]
+    n_conv = 3 #simply add this many operations to every thingy
+    conv_layer = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, activation='selu')
     self.direct_down = LayerWrapper()
     self.direct_up = LayerWrapper()
     self.extra_predictor = LayerWrapper() #3*conv 3x3, then 1x1
-    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
-    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
-    self.extra_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu' ) )
+
+    for i in range( n_conv):
+        self.extra_predictor.append( conv_layer( n_channels) )
     self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
+    self.bypass = Add()
     for i in range( n_levels):
-        self.direct_down.append( DownwardEncoder( level_channels[i] ) )
-        self.direct_up.append( UpwardEncoder( level_channels[-1-i] ) )
+        self.direct_down.append( InceptionEncoder( channel_function(i, n_channels) ) )
+        self.direct_up.append(   InceptionUpsampler( channel_function(n_levels-i-2, n_channels) ) )
+        for j in range( n_conv):
+            self.direct_down[-1].append( conv_layer( channel_function(i, n_channels) ) )
+            self.direct_up[-1].append(   conv_layer( channel_function(n_levels-i-2, n_channels) ) )
+    self.enable_double() #default behaviour
 
   ## specific functions for this network layout
   def enable_double( self, enable=True):
     """ enable the switch which makes the high level features contribute """
     self.enabled = enable
+    self.freeze_extrapredictor( not enable)
 
-  def high_level_prediction( self, images, training=training):
+  def high_level_prediction( self, images, training=False):
+    down_features = [images]
     for layer in self.direct_down:
-        images = layer( images, training=training)
+        down_features.append( layer( down_features[-1], training=training) )
+    features = []
     for layer in self.direct_up:
-        images = layer( images, training=training)
-    return self.extra_predictor( images)
+        tmpvar = down_features.pop()
+        features = self.bypass( features + [tmpvar ] )
+        features = [layer( features, training=training)]
+    return self.extra_predictor( features[0])
 
 
-  # abstractmethods
-  def predictor_features( self, images, *args, **kwargs):
-  def freeze_predictor( self, freeze=False):
-  def freeze_upto( self, freeze_limit, freeze=True):
+  def freeze_predictor( self, freeze=True):
+      self.predictor.freeze( freeze)
+      if self.enabled:
+        self.freeze_extrapredictor( freeze)
+        
+  def freeze_extrapredictor( self, freeze=True):
+    self.direct_down.freeze( freeze )
+    self.direct_up.freeze( freeze )
+    self.extra_predictor.freeze( freeze )
+
 
   # other required methods
   def call( self, images, level=False, training=False, *layer_args, **layer_kwargs ):
-      #super().call() #basically
-      if self.enable:
+      prediction = super().call(images, level=level, training=training, *layer_args, **layer_kwargs ) 
+      if 'only_features' in layer_kwargs and layer_kwargs['only_features']:
+          return prediction
+      level = [level] if not (isinstance( level,bool) or hasattr( level, '__iter__' )) else level
+      if self.enabled and (level in [False, True] or self.n_levels in level):
+        if level is False or not isinstance( prediction, list):
           prediction = prediction + self.high_level_prediction( images, training=training)
+        else:
+          prediction[-1] = prediction[-1] + self.high_level_prediction( images, training=training)
       return prediction
+
+  def predictor_features(self, images):
+      features = super().predictor_features( images )
+      features.append( images)
+      return features
+
+  def predict_tip( self, features, images, training=False, **layer_kwargs):
+    """
+    Have the precomputed features of the lower branch and evaluate the whole
+    upper branch with the images
+    Parameters:
+    -----------
+    features:     list of tf.tensors
+                  contains the features and the original image (in that order)
+    """
+    prediction = super().predict_tip( features, training=training, **layer_kwargs)
+    prediction += self.high_level_prediction( images, training=training, **layer_kwargs )
+    return prediction
+
+
+
 
 
 
