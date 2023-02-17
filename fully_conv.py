@@ -481,6 +481,7 @@ class DoubleUNet(Model, MultilevelNet):
                     if the predictor should be replaced with the inception module,
                     i.e. if we invoke a new model or load from a stored one
     """
+    kwargs.pop( 'channel_function', 0 ) #pop any other funtions that are nt requried here
     super().__init__( *args, **kwargs )
     self.n_levels = n_levels #how many times downsample
     self.n_out = n_out
@@ -541,9 +542,8 @@ class DoubleUNet(Model, MultilevelNet):
         self.side_predictors[-1].append( UpSampling2D() ) #use upsampling for prediction layers
         ### upsampling layers, parallel passes with 1x1
     ### predictors, concatenation of bypass and convolutions
-    self.build_predictor( n_out)
-    if loaded is not False:
-        self.replace_predictor()
+    self.full_predictor = False #track which predictor we currently have
+    self.replace_predictor() #builds the full predictor per default
   
 
   def replace_predictor( self ):
@@ -553,30 +553,23 @@ class DoubleUNet(Model, MultilevelNet):
     """
     try: del self.predictor
     except: pass #not yet built
-    n_predict = self.n_out  
-    layer_kwargs = dict( strides=1, activation='selu' )
-    conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, **layer_kwargs, **kwargs )
-    self.predictor = LayerWrapper()
-    self.predictor.append( Concatenate() )
-    #replaced with inception module
-    generic_inception = LayerWrapper( [conv_1x1( n_predict)] )
-    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=3, activation='selu') ] )
-    generic_inception.append( [conv_1x1( n_predict), Conv2DPeriodic( n_predict, kernel_size=5, activation='selu')  ])
-    generic_inception.append( MaxPool2DPeriodic( 2, strides=1 ) )
-    self.predictor.append( generic_inception)
-    self.predictor.append( Concatenate() )
-    self.predictor.append( Conv2D( n_predict, kernel_size=1, strides=1, activation=None, name='final_predictor') )
-
-
-  def build_predictor( self, n_predict):
-    """ 
-    build the predictor which gives the final prediction
-    n_predict:  int, how many channels to predict
-    """
-    self.predictor = LayerWrapper()
-    self.predictor.append( Concatenate() )
-    self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
-
+    if not self.full_predictor:
+        conv_1x1 = lambda n_channels, **kwargs: Conv2D( n_channels, kernel_size=1, activation='selu')
+        self.predictor = LayerWrapper()
+        self.predictor.append( Concatenate() )
+        #replaced with inception module
+        generic_inception = LayerWrapper( [conv_1x1( self.n_out)] )
+        generic_inception.append( [conv_1x1( self.n_out), Conv2DPeriodic( self.n_out, kernel_size=3, activation='selu') ] )
+        generic_inception.append( [conv_1x1( self.n_out), Conv2DPeriodic( self.n_out, kernel_size=5, activation='selu')  ])
+        generic_inception.append( MaxPool2DPeriodic( 2, strides=1 ) )
+        self.predictor.append( generic_inception)
+        self.predictor.append( Concatenate() )
+        self.predictor.append( Conv2D( self.n_out, kernel_size=1, activation=None, name='final_predictor') )
+    else:
+        self.predictor = LayerWrapper()
+        self.predictor.append( Concatenate() )
+        self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
+    self.full_predictor = not self.full_predictor
 
   def predictor_features( self, images, *args, **kwargs):
     """ return the list of features required for the predict method """
@@ -674,7 +667,11 @@ class DoubleUNet(Model, MultilevelNet):
                 final prediction of the model on the original resolution
     """
     #concat image and channels
-    prediction = self.predictor[0]( feature_channels + [images], training=training)
+    if not isinstance( images, list):
+        images = [images]
+    if not isinstance( feature_channels,list):
+        feature_channels = [feature_channels]
+    prediction = self.predictor[0]( feature_channels + images, training=training)
     prediction = self.predict_inception( self.predictor[1:], prediction, training=training)
     return prediction
  
