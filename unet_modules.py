@@ -97,8 +97,8 @@ class SidePredictor( Layer):
     #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
     self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
-    self.feature_processor.append( Conv2D( n_chnanels, kernel_size=1, activation='selu' )
-    inception_predictor    = LayerWrapper( Conv2D(n_current, kernel_size=1, activation='selu')
+    self.feature_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) )
+    inception_predictor = LayerWrapper( Conv2D( n_channels, kernel_size=1, activation='selu') )
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu' ) )
     inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
