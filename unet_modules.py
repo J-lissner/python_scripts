@@ -85,7 +85,7 @@ class SidePredictor( Layer):
     *args, **kwargs: input arguments passed to the parent __init__ method 
     """
     super().__init__( *args, **kwargs)
-    conv1x1 = lambda n: Conv2D( n, kernel_size=1, activation='selu' )
+    #conv1x1 = lambda n: Conv2D( n, kernel_size=1, activation='selu' )
     inception_slim    = LayerWrapper()
     inception_slim.append( Conv2D( 1, kernel_size=1, activation=None)  ) #default stride is 1
     inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
@@ -96,8 +96,9 @@ class SidePredictor( Layer):
     self.cg_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) )
     #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
-    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
-    inception_predictor    = LayerWrapper()
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.feature_processor.append( Conv2D( n_chnanels, kernel_size=1, activation='selu' )
+    inception_predictor    = LayerWrapper( Conv2D(n_current, kernel_size=1, activation='selu')
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
     inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu' ) )
     inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )

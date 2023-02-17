@@ -199,6 +199,7 @@ class MultilevelNet( ABC):
       if overfit == stopping_delay:
           if learn.is_slashable( learning_rate ) and not learning_rate.allow_stopping:
             learning_rate.slash()
+            overfit = 0
             plateau_loss = plateau_loss/plateau_threshold
             plateau_threshold = 0.97 if learning_rate.allow_stopping else plateau_threshold
             plateau_loss = plateau_loss*plateau_threshold
@@ -318,11 +319,13 @@ class SlimNet( Model, MultilevelNet):
  
 
 
+    #self.freeze_upto( freeze_limit=highest_level, freeze=False)
+    ## its called like that
   ## freezer functions for my LayerWrapper
   def freeze_upto( self, freeze_limit, freeze=True):
-    self.freeze_down_path( False)
-    self.freeze_up_path( False, freeze_limit) 
-    self.freeze_side_predictors( False, freeze_limit)
+    self.freeze_down_path( freeze)
+    self.freeze_up_path( freeze, freeze_limit) 
+    self.freeze_side_predictors( freeze, freeze_limit)
     self.freeze_predictor( not (freeze_limit == self.n_levels )  )
   ## freeze functions for each different 
   def freeze_down_path( self, freeze=True):
