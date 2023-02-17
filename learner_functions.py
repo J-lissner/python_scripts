@@ -174,7 +174,7 @@ class RemoteLR(LRSchedules):
     first it will be constant until plateau, then there will be 1 up jumps
     with a fixed amount of steps and thereafter downsteps whenever it 
     plateaus"""
-    def __init__( self, n_steps=50, base_lr=1e-3, jump=5, n_up=1, n_down=3 ):
+    def __init__( self, n_steps=50, base_lr=1e-3, jump=5, n_up=1, n_down=3, slash_decay=3 ):
         """
         Note that the results were pretty dependent on the weight decay
         from adamW, it performed significantly more reliable for a decay
@@ -196,6 +196,9 @@ class RemoteLR(LRSchedules):
         n_down:         int, default 3
                         how often the learning rate should be decreased by jump
                         If n_up>0 then the number of up jumps will be added to n_down
+        slash_decay:    float, default 3
+                        slashes the weight decay upon LR decrease, even after the jumps
+                        up. Set to False if it should not be slashed
         """
         self.learnrate = base_lr
         self.jump      = jump
@@ -210,6 +213,7 @@ class RemoteLR(LRSchedules):
         self.allow_stopping   = False 
         self.model_parameters = []
         self.first_slash      = 1/99 #any float value to false the ==
+        self.slash_decay = slash_decay #whether or not to slash the weight decay
 
 
     def slash( self, remote_call=True):
@@ -239,11 +243,13 @@ class RemoteLR(LRSchedules):
             self.phase += 1
             self.reset_optimizer()
             self.learnrate /= self.jump
-            try: 
-                self.optimizer.weight_decay = self.optimizer.weight_decay / 10**0.5
+            if self.slash_decay:
+              try: 
+                self.optimizer.weight_decay = self.optimizer.weight_decay / self.slash_decay
                 print( ' and weight decay' )
-            except: 
+              except: 
                 print( ', failed to decrease weight decay' ) 
+            else: print()
             if self.phase == (self.n_up + self.n_down):
                 print( 'now enabling early stopping switch' )
                 self.allow_stopping = True #finally enable stopping of the training
