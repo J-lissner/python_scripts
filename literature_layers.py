@@ -6,6 +6,7 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D, Concatenate
 from tensorflow_addons.layers import InstanceNormalization
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
+from unet_modules import LayerWrapper
 
 
 def Relu( x, training=None, **kwargs):
