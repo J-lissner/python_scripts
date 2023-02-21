@@ -202,7 +202,8 @@ def batch_data( n_batches, data, shuffle=True):
     -------
     batches:        tuple of tensorflow tensors
                     all of the tensors batched as in given order 
-    """
+    """ 
+    data = [data] if not isinstance( data, (list, tuple)) else data
     n_samples = data[-1].shape[0]
     if shuffle:
         permutation = tf.random.shuffle( tf.range( n_samples, dtype=tf.int32) )
