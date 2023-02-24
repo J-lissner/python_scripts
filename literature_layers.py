@@ -29,14 +29,13 @@ class MsPredictor( Model):
         super().__init__( *args, **kwargs)
         self.upsampler = UpSampling2D()
         self.block = []
-        block = self.block
         for i in range( 4):
-            block.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1) ) 
-            block.append( InstanceNormalization() ) 
-            block.append( Selu )
-        block.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1) ) 
-        block.append( InstanceNormalization() ) 
-        block.append( Conv2D( n_out, kernel_size=1, strides=1) ) 
+            self.block.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1) ) 
+            self.block.append( InstanceNormalization() ) 
+            self.block.append( Selu )
+        self.block.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1) ) 
+        self.block.append( InstanceNormalization() ) 
+        self.block.append( Conv2D( n_out, kernel_size=1, strides=1) ) 
 
 
     def call( self, image, previous_prediction=None, training=False):
@@ -50,6 +49,14 @@ class MsPredictor( Model):
         if previous_prediction is not None:
             image = image +  self.upsampler( previous_prediction)
         return image
+
+
+    def freeze( self, freeze=True):
+        for layer in self.block:
+            try: 
+                layer.trainable = not freeze
+            except: 
+                print( 'unable to freeze', layer) #its an activation function
 
 
 
