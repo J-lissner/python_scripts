@@ -9,7 +9,7 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D
-from tensorflow.keras.layers import Concatenate, Add
+from tensorflow.keras.layers import Concatenate, Add, concatenate
 
 import data_processing as get
 import tf_functions as tfun
@@ -26,6 +26,44 @@ class MultilevelNet( ABC):
   def __init__( self, *args, **kwargs):
       super().__init__(*args, **kwags)
       #self.n_levels = n_levels
+
+
+  def batched_prediction( self, batchsize, *inputs, **kwargs):
+      """
+      predict the given data in batches and return the prediction
+      takes variable inputs because this method is inherited to more
+      complicated models.
+      Note that it does only work if the return value of 'call'
+      is a tensorflow.tensor, not a list
+      Parameters:
+      -----------
+      batchsize:  int
+                  how large the batches should be
+      *inputs:    list of tf.tensor like
+                  input data to predict
+      **kwargs:   other keyworded options for the call,
+                  also takes input data
+      Returns:
+      --------
+      prediction: tensorflow.tensor
+                  prediction of the model when using self.call()
+      """
+      n_batches =  int(inputs[0].shape[0]// batchsize)
+      if n_batches == 1:
+          return self( *inputs, **kwargs)
+      prediction = []
+      n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
+      jj = 0 #to catch 1 batch
+      for i in range( n_batches-1):
+          ii = i* n_samples//n_batches
+          jj = (i+1)* n_samples//n_batches
+          sliced_args = get.slice_args( ii, jj, *inputs)
+          sliced_kwargs = get.slice_kwargs( ii, jj, **kwargs) 
+          prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      sliced_args = get.slice_args( jj, None, *inputs)
+      sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
+      prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      return concatenate( prediction, axis=0) 
 
   def freeze_all( self, freeze=True):
       """ 
@@ -54,10 +92,6 @@ class MultilevelNet( ABC):
     channels:     list of tensorflow.tensors,
                   *args to pipe to the model.predict method
     """
-  
-  @abstractmethod
-  def freeze_predictor( self, freeze=False):
-    """ freeze all the parameters that deliver the prediction on the final level"""
 
   def predict_tip( self, *args, training=False, **layer_kwargs ):
     return self.predictor( *args, training=training, **layer_kwargs)
@@ -74,6 +108,10 @@ class MultilevelNet( ABC):
     freeze_limit: int, default None
                   up to which level it freezes
     """ 
+  
+  @abstractmethod
+  def freeze_predictor( self, freeze=True):
+    """ freeze all the parameters that deliver the prediction on the final level"""
 
   def pretrain_level( self, level, train_data, valid_data, **kwargs  ):
     """
@@ -89,8 +127,6 @@ class MultilevelNet( ABC):
                         CARE: will lead to bugs if (level > self.n_levels).any()
     train_data:         tuple of tf.tensor likes
                         input - output data tuple 
-    batchsize:          int, default 25
-                        how big each batch for the train set should be 
     valid_data:         tuple of tf.tensor likes
                         input - output data tuple for validation purposes, 
                         required for early stopping
@@ -154,12 +190,14 @@ class MultilevelNet( ABC):
     ## freeze everything except for the things trainign currently, freezing all for simplicity
     self.freeze_all() 
     self.freeze_upto( freeze_limit=highest_level, freeze=False)
+    print( f'    Pretraining: optimizing {len( self.trainable_variables)} layers\
+ with {sum([np.prod( x.shape) for x in self.trainable_variables])} parameters in level: {level}' )
 
     ## loop variables allocation
     overfit = 0
     best_epoch = 0
     losses = [ [], [] ]
-    pred_valid = self( x_valid, level=max(level) )
+    pred_valid = self.batched_prediction( batchsize, x_valid, level=highest_level )
     plateau_loss = plateau_threshold * loss_metric( y_valid, pred_valid )
     ## training
     tic( f'trained level {level}', silent=True )
@@ -180,7 +218,7 @@ class MultilevelNet( ABC):
           optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
           epoch_loss.append( batch_loss)
       ## epoch post processing
-      pred_valid = self( x_valid, level=max(level) ) #of current level
+      pred_valid = self.batched_prediction( batchsize, x_valid, level=max(level) ) #of current level
       losses[0].append( np.mean( epoch_loss))
       losses[1].append( loss_metric( y_valid, pred_valid ).numpy().mean())
       if ((i+1) % debug_counter) == 0:
@@ -194,9 +232,9 @@ class MultilevelNet( ABC):
           plateau_loss = plateau_threshold * losses[1][-1]
           overfit = 0
           checkpoint_manager.save()
-      else:
-          overfit += 1
-      if overfit == stopping_delay:
+      elif plateau_loss*20 > losses[1][-1]: 
+          overfit += 1 #if the current loss is not worse by an order of magnitude
+      if overfit >= stopping_delay:
           if learn.is_slashable( learning_rate ) and not learning_rate.allow_stopping:
             learning_rate.slash()
             overfit = 0
@@ -237,7 +275,8 @@ class SlimNet( Model, MultilevelNet):
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+3)/2 ) )
+        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level ) )
+    self.n_out = n_out
     self.n_levels = n_levels
     self.down_path = []
     self.up_path = []
@@ -248,15 +287,27 @@ class SlimNet( Model, MultilevelNet):
         maxpool = False if i == 0 else True
         n_current = channel_function( i, n_channels)
         n_upsample = channel_function( i, n_channels)
-        self.down_path.append( InceptionEncoder( n_current, maxpool=maxpool) ) #i am missing a 'maxpool=False' in layer 1
+        self.down_path.append( InceptionEncoder( n_current, maxpool=maxpool) ) 
         self.up_path.append( FeatureConcatenator( n_upsample) )
         self.side_predictors.append( SidePredictor( n_current, n_out ) )
     self.up_path = self.up_path[::-1]
     self.side_predictors = self.side_predictors[::-1]
     #predict via inception module
-    self.predictor = Predictor( n_out)
     self.coarse_grainers = [ AvgPool2DPeriodic( 2**(i+1)) for i in range(n_levels)][::-1] #the average pooling layers are required here
     self.coarse_grainers.append( lambda x: x)
+    self.full_predictor = False
+    self.replace_predictor() #start with full rpedictor, sets the variable above to be True
+
+
+  def replace_predictor( self):
+      try: del self.predictor
+      except: pass 
+      if not self.full_predictor:
+          self.predictor = Predictor( self.n_out)
+      else:
+          self.predictor = LayerWrapper( Conv2D( self.n_out, kernel_size=1) )
+      self.full_predictor = not self.full_predictor 
+      print( f"replaced the predictor to be the {['slim','full'][self.full_predictor]} predictor" )
 
   def call( self, images, level=False, only_features=False, training=False):
     """
@@ -286,19 +337,17 @@ class SlimNet( Model, MultilevelNet):
         ## conditional check on how to store/return current level
         if level is not False and i in level: 
             predictions.append( prediction)
-            if i == max( level):  
-                if len( level) == 1: return predictions[0]
-                else: return predictions
+            if len( level) == 1:  return predictions[0] #same as [-1]
+            elif i == max(level): return predictions
         ## keep going up
         level_features = self.up_path[i]( down_path.pop( -1), feature_channels, prediction, training=training) 
     # level_features now concatenated all required channels
     if only_features: return level_features  #for finetuning training
     prediction = self.predictor( level_features, training=training )
     ## conditional check on how to handle return values
-    if level is not False:  #may only happen if last level requested
+    if level is not False and len(level) > 1:  #may only happen if last level requested
         predictions.append( prediction) 
-        if len( level) == 1: return predictions[0]
-        else: return predictions
+        return predictions
     return prediction 
 
   def predictor_features( self, images, *args, **kwargs):
@@ -353,8 +402,9 @@ class VVEnet( SlimNet):
   I will copy the exact same structure from above and take additionally 
   the extra branch with the high level features
   """
-  def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **kwargs):
+  def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **v_kwargs):
     """ 
+    CARE: may not pass any kwargs to super
     Parameters:
     -----------
     n_out:              int,
@@ -366,34 +416,45 @@ class VVEnet( SlimNet):
     channel_function:   lambda function, default None
                         how to increase the channels in each level, defaults
                         to: lambda( level): n_channels * max( 1, (level+1)//2 )
+    v_kwargs:           kwargs with default arguments
+                        basically the above arguments replaced as 's/[a-z]*_/v_/'
+                        If not given, will default to the passed arguments
+        v_function:     lambda function, slightly different with 
+                        lambda level, n_channels: int( n_channels * ( 1 + (level)/2 ) )
+        v_conv:         int, default 3
+                        number of convolutional operations on each level
     """
     ## super builds the lower predictive branch
-    super().__init__( n_out, n_levels, n_channels, channel_function, *args, **kwargs)
-    if channel_function is None:
-        channel_function = lambda level, n_channels: int( n_channels * max( 1, (level+3)/2 ) )
-    level_channels = [ channel_function( x, n_channels) for x in range( n_levels)]
-    n_conv = 3 #simply add this many operations to every thingy
+    super().__init__( n_out, n_levels, n_channels, channel_function, *args )
+    ## input processing and default arguments
+    v_function = v_kwargs.pop( 'v_function', channel_function)
+    v_channels = v_kwargs.pop( 'v_channels', n_channels)
+    v_levels = v_kwargs.pop( 'v_levels', n_levels) 
+    n_conv = v_kwargs.pop( 'v_conv', 3)  #simply add this many operations to every thingy
+    if v_function is None:
+        v_function = lambda level, n_channels: int( n_channels * ( 1 + (level)/2 ) )
+    ## build the model
     conv_layer = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, activation='selu')
     self.direct_down = LayerWrapper()
     self.direct_up = LayerWrapper()
-    self.extra_predictor = LayerWrapper() #3*conv 3x3, then 1x1
-
+    self.extra_predictor = LayerWrapper() #n_conv*conv 3x3, then 1x1 
     for i in range( n_conv):
-        self.extra_predictor.append( conv_layer( n_channels) )
+        self.extra_predictor.append( conv_layer( v_channels) )
     self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
     self.bypass = Add()
-    for i in range( n_levels):
-        self.direct_down.append( InceptionEncoder( channel_function(i, n_channels) ) )
-        self.direct_up.append(   InceptionUpsampler( channel_function(n_levels-i-2, n_channels) ) )
+    for i in range( v_levels):
+        self.direct_down.append( InceptionEncoder( v_function(i, v_channels) ) )
+        self.direct_up.append(   InceptionUpsampler( v_function(v_levels-i-2, v_channels) ) )
         for j in range( n_conv):
-            self.direct_down[-1].append( conv_layer( channel_function(i, n_channels) ) )
-            self.direct_up[-1].append(   conv_layer( channel_function(n_levels-i-2, n_channels) ) )
+            self.direct_down[-1].append( conv_layer( v_function(i, v_channels) ) )
+            self.direct_up[-1].append(   conv_layer( v_function(v_levels-i-2, v_channels) ) )
     self.enable_double() #default behaviour
 
   ## specific functions for this network layout
   def enable_double( self, enable=True):
     """ enable the switch which makes the high level features contribute """
     self.enabled = enable
+    print( f'setting the double V net to be enabled={enable}')
     self.freeze_extrapredictor( not enable)
 
   def high_level_prediction( self, images, training=False):
@@ -543,7 +604,7 @@ class DoubleUNet(Model, MultilevelNet):
         ### upsampling layers, parallel passes with 1x1
     ### predictors, concatenation of bypass and convolutions
     self.full_predictor = False #track which predictor we currently have
-    self.replace_predictor() #builds the full predictor per default
+    self.replace_predictor() #builds the full predictor per default, changes 'self.full_predictor' variable
   
 
   def replace_predictor( self ):
@@ -570,6 +631,15 @@ class DoubleUNet(Model, MultilevelNet):
         self.predictor.append( Concatenate() )
         self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
     self.full_predictor = not self.full_predictor
+      print( f"replaced the predictor to be the {['slim','full'][self.full_predictor]} predictor" )
+
+  def call( self, images, level=False, only_features=False, training=False):
+    """
+    Predict the images from the specified level.
+    If <level> is set to false, only the fine resolution prediction is given
+    Parameters:
+    images:     tensorflow.tensor
+                image data to predict
 
   def predictor_features( self, images, *args, **kwargs):
     """ return the list of features required for the predict method """
@@ -754,171 +824,6 @@ class DoubleUNet(Model, MultilevelNet):
         return predictions[0]
     return predictions
       
-
-  ### Pretraining functions
-  #def pretrain_level( self, level, train_data, valid_data, **kwargs  ):
-  #  """
-  #  pretrain at current <level> given the data. Will assume that the data is
-  #  of original resolution and downscale accordingly. Note that the data
-  #  tuples getting passed will become unusable after this function due to
-  #  list method callin. May take every lower level into consideration for
-  #  gradient computation, but will only validate with the current level.
-  #  It does stop slightly earlier than the 'very optimum' if there are
-  #  only very minor improvements achieved (speedup for PRE-training' )
-  #  Parameters:
-  #  -----------
-  #  level:              int or iterable of ints
-  #                      which level(s) to pre train. Has to be sorted ascendingl
-  #                      CARE: will lead to bugs if (level > self.n_levels).any()
-  #  train_data:         tuple of tf.tensor likes
-  #                      input - output data tuple 
-  #  batchsize:          int, default 25
-  #                      how big each batch for the train set should be 
-  #  valid_data:         tuple of tf.tensor likes
-  #                      input - output data tuple for validation purposes, 
-  #                      required for early stopping
-  #  **kwargs:           keyworded argumnets with default settings
-  #      batchsize:      int, default 25
-  #                      size of batch
-  #      loss_weigths:   list of floats, default range( 1, n)
-  #                      how to weight each level when 'level' is an iterable
-  #      n_epochs:       int, default 250
-  #                      how many epochs to pre train at most
-  #      learning_rate:  int or tf...learning rate, default learner_functions.SuperConvergence()
-  #                      custom learning rate, defaults to my linear schedule with
-  #                      default parameters, which is relatively high learning rate 
-  #      stopping_delay  int, default 20
-  #                      after how many epochs of no improvement of the validat loss to break
-  #  Returns:
-  #  --------
-  #  valid_loss:         list of floats or None
-  #                      if valid data is given the loss at current level is returned
-  #  """
-  #  # model related stuff and data preprocessng, things i might need to adjust
-  #  n_epochs = kwargs.pop( 'n_epochs', 250 )
-  #  stopping_delay = kwargs.pop( 'stopping_delay', 30 )
-  #  batchsize = kwargs.pop( 'batchsize', 25 )
-  #  loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
-  #  n_batches = max( 1, train_data[0].shape[0] // batchsize )
-  #  learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
-  #  optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=1e-5, beta_1=0.85, beta_2=0.85  ) )
-  #  ## other twiddle parameters
-  #  stopping_increment = 0 #slightly increase the stopping delay after each LR adjustment
-  #  debug_counter = 15
-  #  plateau_threshold = 0.93
-  #  early_stop_threshold = 0.96
-  #  optimizer     = tfa.optimizers.AdamW( learning_rate=learning_rate, **optimizer_kwargs)
-  #  cost_function = tf.keras.losses.MeanSquaredError() #optimize with
-  #  loss_metric   = tf.keras.losses.MeanSquaredError() #validate with
-  #
-  #  ### other required static variables
-  #  if isinstance( learning_rate, learn.slashable_lr() ):
-  #      learning_rate.reference_optimizer( optimizer)
-  #      learning_rate.reference_model( self)
-  #  poolers = []
-  #  level = [level] if isinstance( level, int) else level
-  #  highest_level = max( level)
-  #  for i in level[::-1]: #get the poolers
-  #      if i == self.n_levels:
-  #          poolers.append( lambda x: x) 
-  #      elif i == highest_level:
-  #          poolers.append( AvgPool2DPeriodic( 2**(self.n_levels-i) ) )
-  #      elif i < self.n_levels:
-  #          poolers.insert(0, AvgPool2DPeriodic( 2**(highest_level-i) ) ) 
-  #  y_train = poolers[-1]( train_data.pop(-1) ) #can pool on the highest level anyways
-  #  y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level
-  #  x_valid = valid_data[0]
-  #  poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function
-  #
-  #  tic( f'trained level {level}', silent=True )
-  #  ## freeze everything except for the things trainign currently, freezing all for simplicity
-  #  freeze_limit = range( min(level[-1] + 1, self.n_levels) )
-  #  self.freeze_all() 
-  #  self.freeze_downscalers( False)
-  #  self.freeze_processors( False, freeze_limit) 
-  #  self.freeze_concatenators( False, freeze_limit) 
-  #  self.freeze_side_predictors( False, freeze_limit)
-  #  self.freeze_upsamplers( False, range(level[-1]) ) 
-  #  ## loop variables allocation
-  #  overfit = 0
-  #  slash_lr = 0
-  #  best_epoch = 0
-  #  pred_valid = self( x_valid, multilevel_prediction=max(level) )
-  #  best_loss = loss_metric( y_valid, pred_valid )
-  #  valid_loss = [best_loss]
-  #  train_loss = [0.5] #start with a random number because valid loss starts with an entry
-  #  checkpoint          = tf.train.Checkpoint( model=self, optimizer=optimizer)
-  #  ckpt_folder         = '/tmp/ckpt_{}'.format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
-  #  checkpoint_manager  = tf.train.CheckpointManager( checkpoint, ckpt_folder, max_to_keep=1)
-  #  checkpoint_manager.save()
-  #  plateau_loss = valid_loss[0]
-  #  ## training
-  #  tic( f'    trained another {debug_counter} epochs', silent=True )
-  #  for i in range( n_epochs):
-  #    epoch_loss = []
-  #    for x_batch, y_batch in tfun.batch_data( n_batches, [train_data[0], y_train ] ):
-  #        with tf.GradientTape() as tape:
-  #            y_pred = self( x_batch, level, training=True )
-  #            if len( level) == 1:
-  #                batch_loss = cost_function( y_batch, y_pred )
-  #            else:
-  #                batch_loss = 0
-  #                y_batch = [layer(y_batch) for layer in poolers]
-  #                for j in level:
-  #                    batch_loss += loss_weights[j] * cost_function( y_pred[j], y_batch[j] )
-  #        gradient = tape.gradient( batch_loss, self.trainable_variables)
-  #        optimizer.apply_gradients( zip( gradient, self.trainable_variables) )
-  #        epoch_loss.append( batch_loss)
-  #    ## epoch post processing
-  #    train_loss.append( tf.reduce_mean( batch_loss ) )
-  #    pred_valid = self( x_valid, multilevel_prediction=max(level) )
-  #    valid_loss.append( loss_metric( y_valid, pred_valid )  ) 
-  #    if (i+1) % debug_counter == 0:
-  #        toc( f'    trained another {debug_counter} epochs', auxiliary=f', total: {i+1}' )
-  #        tic( f'    trained another {debug_counter} epochs', silent=True )
-  #        print( f'    train loss: {train_loss[-1]:1.4e},  vs best {train_loss[best_epoch]:1.4e}'  )
-  #        print( f'    valid loss: {valid_loss[-1]:1.4e},  vs best {valid_loss[best_epoch]:1.4e}' )
-  #        if isinstance( learning_rate, learn.slashable_lr()):
-  #          print( f'    plateau:    {plateau_loss:1.4e}' )
-  #    ## learning rate adjustment
-  #    if isinstance( learning_rate, learn.slashable_lr()) and valid_loss[-1] < plateau_loss:  
-  #      plateau_loss = plateau_threshold*valid_loss[-1] 
-  #      slash_lr = 0
-  #    elif isinstance( learning_rate, learn.slashable_lr()): #if only marginal improvement
-  #      slash_lr += 1
-  #      if slash_lr == stopping_delay and not learning_rate.allow_stopping:
-  #          learning_rate.slash()
-  #          plateau_loss = plateau_threshold*valid_loss[-1]
-  #          stopping_delay += stopping_increment
-  #          slash_lr = 0
-  #          overfit = 0
-  #    else: #make sure that the model stops upon overfitting
-  #        plateau_loss = best_loss
-  #    ## potential early stopping
-  #    if valid_loss[-1] < best_loss:
-  #        best_loss = early_stop_threshold * valid_loss[-1]
-  #        checkpoint_manager.save() 
-  #        best_epoch = i+1 #we started with 1 entry in the valid loss
-  #        overfit = 0
-  #    else: 
-  #        overfit += 1 
-  #    if overfit > stopping_delay and best_loss > plateau_loss/50: #just dont wave the flag too early
-  #        if isinstance( learning_rate, learn.slashable_lr()) and not learning_rate.allow_stopping:
-  #            print( 'slashing the learning rate because i was overfitting' )
-  #            learning_rate.slash()
-  #            plateau_loss = valid_loss[-1]
-  #            overfit = 0
-  #            stopping_delay += stopping_increment
-  #            continue
-  #        break
-  #  toc( f'trained level {level}')
-  #  checkpoint.restore( checkpoint_manager.latest_checkpoint)
-  #  if i == (n_epochs - 1):
-  #      print( f'    pretrained level {level} for the full {n_epochs} epochs' )
-  #  else: 
-  #      print( f'    model converged when pretraining {level} after {i} epochs' )
-  #  del poolers #don't want layers lying around
-  #  return valid_loss
 
   def freeze_upto( self, freeze_limit, freeze=True):
     """ freeze everything up to the required layer, there is a shit workaround 
