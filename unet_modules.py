@@ -58,7 +58,7 @@ class LayerWrapper(ListWrapper):
   def freeze( self, freeze=True):
     for layer in self:
         if isinstance( layer, LayerWrapper):
-            layer.freeze() 
+            layer.freeze( freeze) 
         elif isinstance( layer, list):
             for sublayer in layer:
                 sublayer.trainable = not freeze
