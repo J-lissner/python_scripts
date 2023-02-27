@@ -295,8 +295,8 @@ class SlimNet( Model, MultilevelNet):
     #predict via inception module
     self.coarse_grainers = [ AvgPool2DPeriodic( 2**(i+1)) for i in range(n_levels)][::-1] #the average pooling layers are required here
     self.coarse_grainers.append( lambda x: x)
-    self.full_predictor = False
-    self.replace_predictor() #start with full rpedictor, sets the variable above to be True
+    self.full_predictor = True
+    self.replace_predictor() #default to slim predictor, swaps the variable above
 
 
   def replace_predictor( self):
@@ -603,8 +603,8 @@ class DoubleUNet(Model, MultilevelNet):
         self.side_predictors[-1].append( UpSampling2D() ) #use upsampling for prediction layers
         ### upsampling layers, parallel passes with 1x1
     ### predictors, concatenation of bypass and convolutions
-    self.full_predictor = False #track which predictor we currently have
-    self.replace_predictor() #builds the full predictor per default, changes 'self.full_predictor' variable
+    self.full_predictor = True
+    self.replace_predictor() #default to slim predictor, swaps the variable above
   
 
   def replace_predictor( self ):
