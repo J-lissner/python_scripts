@@ -28,6 +28,7 @@ class MsPredictor( Model):
     def __init__( self, n_channels, n_out=2, *args, **kwargs):
         super().__init__( *args, **kwargs)
         self.upsampler = UpSampling2D()
+        self.concatenator = Concatenate()
         self.block = []
         for i in range( 4):
             self.block.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1) ) 
@@ -44,10 +45,13 @@ class MsPredictor( Model):
         the coarse grained image, and if the prediction of a previous layer
         is given, then use it for 'refinement'
         """
+        if previous_prediction is not None:
+            previous_prediction = self.upsampler( previous_prediction)
+            image = self.concatenator( [image, previous_prediction] )
         for layer in self.block:
             image = layer( image, training=training) #already full prediction
         if previous_prediction is not None:
-            image = image +  self.upsampler( previous_prediction)
+            image = image + previous_prediction
         return image
 
 

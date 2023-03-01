@@ -134,9 +134,8 @@ class MSNet(Model, MultilevelNet):
           ## add current level to list if asked for
           if level is not False and i in level: 
             predictions.append( prediction)
-            if i == max( level):  
-                if len( level) == 1: return predictions[0]
-                else: return predictions 
+            if len( level) == 1:  return predictions[0] #same as [-1]
+            elif i == max(level): return predictions
         ## check if only last level is requested
         if level is not False:  #may only happen if last level requested
             if len( level) == 1: return predictions[0]
