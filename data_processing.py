@@ -117,6 +117,7 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     'covariance_shift': scale by 
     '0,1': scale each component to lie on the interval [0,1]
     '-1,1': scale each component to lie on the interval [-1,1]
+    'invert'/'inv': just change the sign of it
     Parameters:
     -----------
     data:   numpy nd-array
@@ -176,6 +177,9 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
         data       = data - scaling[0]      
         scaling[1] = np.max( data, axis=axis)     
         data       = data /scaling[1] *2 -1 
+    elif 'inv' in scaling[2]:
+        scaling[0] = -1 
+        data = data*scaling[0]
     else:
         print( '########## Error Message ##########\nno valid scaling specified, returning unscaled data and no scaling')
         print( "valid options are: 'single_std1', 'combined_std1', '0-1', '-1,1', try help(scale_data)\n###################################" )
@@ -210,6 +214,8 @@ def scale_with_shifts( data, scaling):
         data = (data - scaling[0]) /scaling[1] 
     elif '-1' in scaling[2] and '0' not in scaling[2]:
         data = (data - scaling[0]) /scaling[1] *2 -1 
+    elif 'inv' in scaling[2]:
+        data = data*scaling[0]
     else:
         print('Invalid scaletype given in data_processing.scale_with_shifts, returning raw data') 
     return data
@@ -239,6 +245,8 @@ def unscale_data( data, scaling ):
         data = data * scaling[1] + scaling[0] 
     elif '-1' in scaling[2] and '1' in scaling[2]:
         data = (data + 1) * scaling[1]/2 + scaling[0]  
+    elif 'inv' in scaling[2]:
+        data = data/scaling[0]
     else:
         print('Invalid scaletype given in data_processing.unscale_data, returning raw data') 
     return data
