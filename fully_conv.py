@@ -463,8 +463,7 @@ class VVEnet( SlimNet):
         down_features.append( layer( down_features[-1], training=training) )
     features = []
     for layer in self.direct_up:
-        tmpvar = down_features.pop()
-        features = self.bypass( features + [tmpvar ] )
+        features = self.bypass( features + [down_features.pop() ] )
         features = [layer( features, training=training)]
     return self.extra_predictor( features[0])
 
@@ -508,7 +507,8 @@ class VVEnet( SlimNet):
                   contains the features and the original image (in that order)
     """
     prediction = super().predict_tip( features, training=training, **layer_kwargs)
-    prediction += self.high_level_prediction( images, training=training, **layer_kwargs )
+    if self.enable:
+        prediction += self.high_level_prediction( images, training=training, **layer_kwargs )
     return prediction
 
 
@@ -631,15 +631,8 @@ class DoubleUNet(Model, MultilevelNet):
         self.predictor.append( Concatenate() )
         self.predictor.append( Conv2D( self.n_out, kernel_size=1, strides=1, activation=None, name='final_predictor') )
     self.full_predictor = not self.full_predictor
-      print( f"replaced the predictor to be the {['slim','full'][self.full_predictor]} predictor" )
+    print( f"replaced the predictor to be the {['slim','full'][self.full_predictor]} predictor" )
 
-  def call( self, images, level=False, only_features=False, training=False):
-    """
-    Predict the images from the specified level.
-    If <level> is set to false, only the fine resolution prediction is given
-    Parameters:
-    images:     tensorflow.tensor
-                image data to predict
 
   def predictor_features( self, images, *args, **kwargs):
     """ return the list of features required for the predict method """
