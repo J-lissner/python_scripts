@@ -50,8 +50,8 @@ class MsPredictor( Model):
             image = self.concatenator( [image, previous_prediction] )
         for layer in self.block:
             image = layer( image, training=training) #already full prediction
-        if previous_prediction is not None:
-            image = image + previous_prediction
+        #if previous_prediction is not None:
+        #    image = image + previous_prediction
         return image
 
 
