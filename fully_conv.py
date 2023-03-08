@@ -259,7 +259,7 @@ class SlimNet( Model, MultilevelNet):
   Clean implementation of the unet, cohesive building blocks 
   and slim evaluation scheme (code wise)
   """
-  def __init__( self, n_out, n_levels=4, n_channels=8, channel_function=None, *args, **kwargs):
+  def __init__( self, n_out, n_levels=4, n_channels=12, channel_function=None, *args, **kwargs):
     """ 
     Parameters:
     -----------
@@ -275,7 +275,7 @@ class SlimNet( Model, MultilevelNet):
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level/2 ) )
+        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level/3 ) )
     self.n_out = n_out
     self.n_levels = n_levels
     self.down_path = []
@@ -422,7 +422,7 @@ class VVEnet( SlimNet):
   I will copy the exact same structure from above and take additionally 
   the extra branch with the high level features
   """
-  def __init__( self, n_out, n_levels=4, n_channels=6, channel_function=None, *args, **v_kwargs):
+  def __init__( self, n_out, n_levels=4, n_channels=12, channel_function=None, *args, **v_kwargs):
     """ 
     CARE: may not pass any kwargs to super
     Parameters:
@@ -452,7 +452,7 @@ class VVEnet( SlimNet):
     v_levels = v_kwargs.pop( 'v_levels', n_levels) 
     n_conv = v_kwargs.pop( 'v_conv', 3)  #simply add this many operations to every thingy
     if v_function is None:
-        v_function = lambda level, n_channels: int( n_channels * ( 1 + (level)/2 ) )
+        v_function = lambda level, n_channels: int( n_channels * ( 1 + (level)/3 ) )
     ## build the model
     conv_layer = lambda n_channels: Conv2DPeriodic( n_channels, kernel_size=3, activation='selu')
     self.direct_down = LayerWrapper()
