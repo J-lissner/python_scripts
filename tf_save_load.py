@@ -76,6 +76,8 @@ class Saver():
         self.scaling(3*[None], 3*[None]) #default no scaling saved for flexibility
 
     def model( self, model):
+        try: model.save_state( self.savepath)
+        except: pass
         model.save_weights('{}/weights/'.format( self.savepath), save_format='tf')
 
 
@@ -258,20 +260,20 @@ class Loader():
     def data_return( self):
         data = []
         if self.model_switch:
-            data.append( self.model() )
+            data.append( self.load_model() )
         if self.scaling_switch:
-            data.append( self.scaling() )
+            data.append( self.load_scaling() )
         if self.locals_switch:
-            data.append( self.locals() )
+            data.append( self.load_locals() )
         if self.tracked_switch:
-            data.append( self.tracked_variables() )
+            data.append( self.load_tracked_variables() )
         if len( data) == 1: return data[0]
         else: return data
 
 
 
 
-    def model(self):
+    def load_model(self):
         """
         Return the model how it was saved. This accesses the saved 'Saver.code()' and
         (optional) the 'Saver.inputs()'
@@ -299,8 +301,15 @@ class Loader():
             model = model_code( *args, **kwargs, loaded=True)
         except: #if 'loaded' is not specified as inputs go to default behaviour
             model = model_code( *args, **kwargs )
-        model.load_weights( '{}/weights/'.format( self.load_path) )
+        self.reload_weights( model)
         return model
+
+    def reload_weights( self, model):
+        """ reload the weights of the model, useful if the architecture changes
+        during training and is different than on default init """
+        try: model.recover_state( self.load_path)
+        except: pass
+        model.load_weights( '{}/weights/'.format( self.load_path) )
     
     def get_args( self):
         """ return the args given for model initialization """
@@ -323,7 +332,7 @@ class Loader():
         return kwargs
 
 
-    def scaling(self ):
+    def load_scaling(self ):
         """
         Load the previously stored scalings for the data.
         The scalings should be computed with the module 'data_processing' 
@@ -342,7 +351,7 @@ class Loader():
         return scalings
 
 
-    def locals(self, tutorial=True):
+    def load_locals(self, tutorial=True):
         """
         #TODO i think there might be a bug here on the pickle.load
         Restore the locally defined variables in the previous training.
@@ -379,7 +388,7 @@ class Loader():
         print()
         return local_variables
 
-    def tracked_variables(self ):
+    def load_tracked_variables(self ):
         """
         Load additionally tracked variables after training
         Parameters:
@@ -396,68 +405,21 @@ class Loader():
 
 
 
-class Retraining(Loader):
+class Retraining(Loader, Saver):
     """
     Load a previously trained model and then save it into the specified path
     The save path can be the same as the load path, then the previous model is overwritten
+    Just assume that everything is already how it should be and simply overwrite everything
+    in the new folder which directly relates to the model, i.e. the state and the 
+    trainable variables
     """
-    def __init__( self, load_path, save_path):
+    def __init__( self, load_path, save_path=None, *args, **kwargs):
         self.load_path = load_path 
-        self.save_path = save_path 
-
-        with open( '{}/local_kwargs.pkl'.format( self.load_path), 'rb') as pklfile:
-            local_variables = pickle.load( pklfile)
-        self.local_variables = local_variables
+        self.save_path = load_path  if save_path is None else save_path
+        if self.load_path != self.save_path:
+            os.system( f'cp -r {self.load_path} {self.save_path}' )
 
 
-    def load_model(self ):
-        return self.model() #inherited from loader class
-
-
-    def load_scaling(self ):
-        return self.scaling()
-
-    def load_locals(self, tutorial=True):
-        return self.locals() 
-
-
-    def save_model( self, model):
-        os.system( 'mkdir -p {}'.format( self.save_path) ) #simply does nothing if it already exists
-        model.save_weights('{}/weights/'.format( self.save_path), save_format='tf')
-        if self.save_path == self.load_path:
-            return 
-        ## else copy everything to the new folder
-        os.system( 'touch {}/__init__.py'.format( self.save_path) )
-        os.system( 'cp {}/custom_model.py {}/custom_model.py'.format( self.load_path, self.save_path) ) 
-        os.system( 'cp {}/model_name.pkl  {}/model_name.pkl'.format( self.load_path, self.save_path) ) 
-        os.system( 'cp {}/model_name.txt  {}/model_name.txt'.format( self.load_path, self.save_path) ) 
-        os.system( 'cp {}/init_args.pkl   {}/init_args.pkl'.format( self.load_path, self.save_path) ) 
-        os.system( 'cp {}/init_kwargs.pkl {}/init_kwargs.pkl'.format( self.load_path, self.save_path) ) 
-        ## copy previously stored locals and scalings
-        self.save_locals()
-        self.save_scaling()
-
-
-    def save_locals(self, **kwargs):
-        """
-        saves the local variables defined in the __main__ file
-        local variables refers to definitions of the ANN, optimizer, loss, etc.
-        (where the ANN was trained)
-        If there are no locals given, then the previously stored locals are copied 
-        """
-        self.local_variables = { **self.local_variables, **kwargs }
-        with open( '{}/local_kwargs.pkl'.format( self.save_path), 'wb') as pklfile:
-            pickle.dump( self.local_variables, pklfile)
-
-
-    def save_scaling(self, input_scaling=None, output_scaling=None):
-        if input_scaling is None and output_scaling is None:
-            os.system( 'cp {}/scalings.pkl   {}/scalings.pkl'.format( self.load_path, self.save_path) ) 
-            return
-        else:
-            scalings = { 'input':input_scaling, 'output':output_scaling}
-            with open( '{}/scalings.pkl'.format( self.save_path), 'wb') as pklfile:
-                pickle.dump( scalings, pklfile)
 
 
 class PartialArchitecture( Loader):
