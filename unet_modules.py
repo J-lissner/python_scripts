@@ -141,7 +141,7 @@ class SidePredictor( Layer):
     if prediction is None:
         prediction       = self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs)
     else: #passed to the predictor
-        prediction = (self.direct( upsampler( prediction) ) + 
+        prediction = (self.direct_upsampler( prediction) + 
                     self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs) )
     return prediction, feature_channels
 
@@ -203,11 +203,15 @@ class Predictor( Layer):
     self.predictor.append( generic_resnet)
     self.predictor.append( Add() )
     self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
+    self.direct_upsampler = UpSampling2D() #only required for specific model type
   
   def freeze( self, freeze=True):
     self.predictor.freeze( freeze)
 
-  def __call__( self, images, *layer_args, **layer_kwargs):
+  def __call__( self, images, prediction=None, *layer_args, **layer_kwargs):
+    if prediction is not None:
+        prediction = self.direct_upsampler( prediction)
+        return prediction + self.predictor( images)
     return self.predictor( images)
 
 

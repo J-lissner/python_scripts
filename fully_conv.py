@@ -259,7 +259,7 @@ class SlimNet( Model, MultilevelNet):
   Clean implementation of the unet, cohesive building blocks 
   and slim evaluation scheme (code wise)
   """
-  def __init__( self, n_out, n_levels=4, n_channels=12, channel_function=None, *args, **kwargs):
+  def __init__( self, n_out, n_levels=4, n_channels=12, channel_function=None, direct_upsampling=False, *args, **kwargs):
     """ 
     Parameters:
     -----------
@@ -271,11 +271,15 @@ class SlimNet( Model, MultilevelNet):
                         number of channels (constant) in each level 
     channel_function:   lambda function, default None
                         how to increase the channels in each level, defaults
-                        to: lambda( level): n_channels * max( 1, (level+1)//2 )
+                        to: lambda( level): n_channels * ( 1+ level/3 ) )
+    direct_upsampling:  bool, default False
+                        if the prediction should be directly taken for the next level
+                        prediction (False), or considered as feature for convolution (True)
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
         channel_function = lambda level, n_channels: int( n_channels * ( 1 + level/3 ) )
+    self.direct_upsampling = direct_upsampling
     self.n_out = n_out
     self.n_levels = n_levels
     self.down_path = []
@@ -351,19 +355,29 @@ class SlimNet( Model, MultilevelNet):
     for layer in self.down_path:
         down_path.append( layer( down_path[-1], training=training ) )
     ## now go up again (and store) the side prediction
+    prediction = None 
     level_features = down_path.pop( -1)
     for i in range( len( self.side_predictors)):
-        prediction, feature_channels = self.side_predictors[i]( self.coarse_grainers[i]( images), level_features, training=training ) 
+        if self.direct_upsampling: #use upsampled prediction for y = y + y_-1
+            prediction, feature_channels = self.side_predictors[i]( self.coarse_grainers[i]( images), level_features, prediction, training=training ) 
+        else: #use upsampled predictions as features
+            prediction, feature_channels = self.side_predictors[i]( self.coarse_grainers[i]( images), level_features, training=training ) 
         ## conditional check on how to store/return current level
         if level is not False and i in level: 
             predictions.append( prediction)
             if len( level) == 1:  return predictions[0] #same as [-1]
             elif i == max(level): return predictions
         ## keep going up
-        level_features = self.up_path[i]( down_path.pop( -1), feature_channels, prediction, training=training) 
+        if self.direct_upsampling:
+            level_features = self.up_path[i]( down_path.pop( -1), feature_channels, training=training) 
+        else:
+            level_features = self.up_path[i]( down_path.pop( -1), feature_channels, prediction, training=training) 
     # level_features now concatenated all required channels
     if only_features: return level_features  #for finetuning training
-    prediction = self.predictor( level_features, training=training )
+    if self.direct_upsampling:
+        prediction = self.predictor( level_features, prediction, training=training )
+    else:
+        prediction = self.predictor( level_features, training=training )
     ## conditional check on how to handle return values
     if level is not False and len(level) > 1:  #may only happen if last level requested
         predictions.append( prediction) 
@@ -445,7 +459,8 @@ class VVEnet( SlimNet):
                         number of convolutional operations on each level
     """
     ## super builds the lower predictive branch
-    super().__init__( n_out, n_levels, n_channels, channel_function, *args )
+    direct_upsampling = v_kwargs.pop( 'direct_upsampling', False)
+    super().__init__( n_out, n_levels, n_channels, channel_function, direct_upsampling, *args )
     ## input processing and default arguments
     v_function = v_kwargs.pop( 'v_function', channel_function)
     v_channels = v_kwargs.pop( 'v_channels', n_channels)
@@ -542,6 +557,8 @@ class VVEnet( SlimNet):
     -----------
     features:     list of tf.tensors
                   contains the features and the original image (in that order)
+    images:       tf.tensor
+                  the actual image data used for the upper V for prediction
     """
     prediction = super().predict_tip( features, training=training, **layer_kwargs)
     if self.enabled:
