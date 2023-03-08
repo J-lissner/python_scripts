@@ -1,7 +1,11 @@
-import tensorflow as tf
-import tensorflow_addons as tfa
 import numpy as np
-import tensorflow_functions as tfun
+try:
+    import tensorflow as tf
+    import tensorflow_addons as tfa
+    import tensorflow_functions as tfun
+except:
+    print( 'unable to load tensorflow related modules, some functions in "data_handling" will be unavailable!' )
+import random
 from math import ceil, floor
 
 def batch_data( n_batches, data, shuffle=True):
@@ -44,7 +48,7 @@ def batch_data( n_batches, data, shuffle=True):
 
 
 class MultiSetBatcher():
-    def __init__( data_sets, batch_size=25, shuffle=True ):
+    def __init__( self, data_sets, batch_size=25, shuffle=True ):
         """
         Given multiple sets of non-mergable tenors, return them batchwise
         in matching input output forms. The class only assigns references
@@ -55,8 +59,8 @@ class MultiSetBatcher():
         for x_batch, y_batch  in MultiSetBatcher(): #after invocation
         Parameters:
         -----------
-        data_sets:  list like of [[input, ..., output],...] tensor tuples
-                    data tuples of non mergable tensors
+        data_sets:  list like of [[input, ..., output],...] tensor lists
+                    data 'tuples' of non mergable tensors
         batch_size: int or list of ints, default 25
                     size of each batch for all or for each training set
         shuffle:    bool, default True
@@ -66,7 +70,7 @@ class MultiSetBatcher():
         self.n_datasets = len( data_sets)
         if isinstance( batch_size, int):
             batch_size = self.n_datasets*[batch_size]
-        n_samples      = len(self)
+        n_samples      = self.__len__()
         self.n_batches = [ ceil(n_samples[i]/batch_size[i]) for i in range( self.n_datasets) ]
 
     def __len__( self):
@@ -85,15 +89,25 @@ class MultiSetBatcher():
         idx               = self.n_datasets*[0] #current idx for batch start/stop
         remaining_batches = self.n_batches.copy()
         while sum( remaining_batches) > 0:
-            n_batches = min( self.n_datasets, sum( remaining_batches) ) #per while iteration
-            dset_idx  = weighted_sampling( remaining_batches, n_batches)
+            if sum( remaining_batches) <= self.n_datasets: 
+                dset_idx = []
+                for i in range( len( remaining_batches)):
+                    dset_idx += remaining_batches[i]*[i]
+                random.shuffle( dset_idx)
+            else: #loop through as many batches as you have datasets
+                dset_idx  = self.weighted_sampling( remaining_batches, self.n_datasets) 
+            drawn_idx = np.zeros( len(remaining_batches) )
+            for i in dset_idx: #backcheck if its not too many for single set
+                drawn_idx[i] += 1
+            if drawn_idx > remaining_batches.any(): 
+                continue #simply draw another one, this will almost never happen 
             for i in dset_idx:
                 batch   = []
-                ii      = batch_size*idx[i]
-                jj      = batch_size*(idx[i]+1) 
+                ii      = self.batch_size*idx[i]
+                jj      = self.batch_size*(idx[i]+1) 
                 idx[i] += 1
                 remaining_batches[i] -= 1
-                for data in self.datasets[i]: 
+                for data in self.data[i]: 
                     if remaining_batches[i] != 0:
                         batch.append( data[ii:jj] )
                     else: #last batch might be smaller
@@ -118,14 +132,15 @@ class MultiSetBatcher():
         """
         choices      = n_draws*[None]
         draw_weights = np.cumsum( sample_weights) 
-        for i in range(n):
+        for i in range( n_draws):
             pick = np.random.uniform(0, sum( sample_weights ))
             j    = 1
-            if pick <= draw_weights[0] and draw_weights[0] != 0:
+            if pick <= draw_weights[0] and draw_weights[0] != 0: #if its smaller than first idx
                 choices[i] = 0
             while choices[i] is None:
                 if draw_weights[j-1] < pick <= draw_weights[j]:
                     choices[i] = j
+                j += 1
         return choices 
 
 
