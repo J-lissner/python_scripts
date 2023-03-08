@@ -90,21 +90,23 @@ class SidePredictor( Layer):
     inception_slim.append( Conv2D( 1, kernel_size=1, activation=None)  ) #default stride is 1
     inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
     inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=5, activation='selu') )
+    self.direct_upsampler = UpSampling2D()
     self.cg_processor = LayerWrapper()
     self.cg_processor.append( inception_slim) #list inside list -> inception module
     self.cg_processor.append( Concatenate() )
+    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
     self.cg_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) )
     #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
     self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
     self.feature_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu' ) )
-    inception_predictor = LayerWrapper( Conv2D( n_channels, kernel_size=1, activation='selu') )
-    inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
-    inception_predictor.append( Conv2DPeriodic( n_channels, kernel_size=5, strides=1, activation='selu' ) )
-    inception_predictor.append( MaxPool2DPeriodic( 2, strides=1) )
+    resnet_predictor = LayerWrapper( Conv2D( n_channels, kernel_size=1, activation='selu') )
+    resnet_predictor.append( [Conv2DPeriodic( n_channels, kernel_size=3, strides=1 )] )
+    resnet_predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
     self.side_predictor = LayerWrapper( Concatenate() ) #channels and cg features
-    self.side_predictor.append( inception_predictor )
-    self.side_predictor.append( Concatenate() )
+    self.side_predictor.append( resnet_predictor )
+    self.side_predictor.append( Add() )
     self.side_predictor.append( Conv2D( n_out, kernel_size=1, activation=None ) )
 
   def freeze( self, freeze=True):
@@ -113,7 +115,7 @@ class SidePredictor( Layer):
     self.side_predictor.freeze( freeze)
 
 
-  def __call__( self, cg_image, feature_channels, *layer_args, **layer_kwargs):
+  def __call__( self, cg_image, feature_channels, prediction=None, *layer_args, **layer_kwargs):
     """ 
     Give the models prediction on current level as well as the current 
     features in the up path
@@ -123,6 +125,9 @@ class SidePredictor( Layer):
                         coarse grained original image at current resolution
     feature_channels:   tensorflow.tensor
                         feature channels at current resolution
+    prediction:         tensorflow.tensor
+                        prediction of the prior level, is simply upsampled 
+                        added to the prediction if given
     *layer_kw/args:     kw/args directly passed to each layer call 
     Returns:
     --------
@@ -133,30 +138,12 @@ class SidePredictor( Layer):
     """
     feature_channels = [feature_channels, self.cg_processor( cg_image, *layer_args, **layer_kwargs) ]
     feature_channels = self.feature_processor( feature_channels, *layer_args, **layer_kwargs)
-    prediction       = self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs)
+    if prediction is None:
+        prediction       = self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs)
+    else: #passed to the predictor
+        prediction = (self.direct( upsampler( prediction) ) + 
+                    self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs) )
     return prediction, feature_channels
-
-
-class Predictor( Layer):
-  def __init__( self, n_out, *args, **kwargs):
-    super().__init__( *args, **kwargs)
-    branch1 = [MaxPool2DPeriodic( 2, strides=1 ), Conv2D( n_out, kernel_size=1, activation='selu')]
-    branch2 = [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=3, activation='selu') ]
-    branch3 = [Conv2D( n_out, kernel_size=1, activation='selu'), Conv2DPeriodic( n_out, kernel_size=5, activation='selu')  ]
-    generic_inception = LayerWrapper()
-    generic_inception.append( branch1 )
-    generic_inception.append( branch2 )
-    generic_inception.append( branch3 )
-    self.predictor = LayerWrapper()
-    self.predictor.append( generic_inception)
-    self.predictor.append( Concatenate() )
-    self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
-  
-  def freeze( self, freeze=True):
-    self.predictor.freeze( freeze)
-
-  def __call__( self, images, *layer_args, **layer_kwargs):
-    return self.predictor( images)
 
 
 class FeatureConcatenator( Layer):
@@ -182,7 +169,7 @@ class FeatureConcatenator( Layer):
     self.prediction_upsampler.freeze( freeze)
     self.feature_upsampler.freeze( freeze)
 
-  def __call__( self, bypass_channels, feature_channels, prediction, *layer_args, **layer_kwargs):
+  def __call__( self, bypass_channels, feature_channels, prediction=None, *layer_args, **layer_kwargs):
     """
     upsample the feature channels and the previous prediction indepenently
     Then concatenate all of the three arguments.
@@ -202,6 +189,27 @@ class FeatureConcatenator( Layer):
     feature_channels = [] if feature_channels is None else [self.feature_upsampler( feature_channels, *layer_args, **layer_kwargs)]
     prediction       = [] if prediction is None else [self.prediction_upsampler( prediction, *layer_args, **layer_kwargs)]
     return concatenate( bypass_channels + feature_channels + prediction )
+
+
+class Predictor( Layer):
+  def __init__( self, n_out, *args, **kwargs):
+    super().__init__( *args, **kwargs)
+    branch1 = Conv2D( 2*n_out, kernel_size=1, activation='selu')
+    branch2 = [Conv2DPeriodic( 2*n_out, kernel_size=3), Conv2DPeriodic( 2*n_out, kernel_size=3) ]
+    generic_resnet = LayerWrapper()
+    generic_resnet.append( branch1 )
+    generic_resnet.append( branch2 )
+    self.predictor = LayerWrapper()
+    self.predictor.append( generic_resnet)
+    self.predictor.append( Add() )
+    self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
+  
+  def freeze( self, freeze=True):
+    self.predictor.freeze( freeze)
+
+  def __call__( self, images, *layer_args, **layer_kwargs):
+    return self.predictor( images)
+
 
 class InceptionUpsampler( Layer):
   """

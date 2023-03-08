@@ -1,10 +1,10 @@
 import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa
+import pickle
 from abc import ABC, abstractmethod
 from datetime import datetime
 from tensorflow.math import ceil
-#from my_models import Model 
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
@@ -275,7 +275,7 @@ class SlimNet( Model, MultilevelNet):
     """
     super().__init__( *args, **kwargs)
     if channel_function is None:
-        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level ) )
+        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level/2 ) )
     self.n_out = n_out
     self.n_levels = n_levels
     self.down_path = []
@@ -308,6 +308,26 @@ class SlimNet( Model, MultilevelNet):
           self.predictor = LayerWrapper( Conv2D( self.n_out, kernel_size=1) )
       self.full_predictor = not self.full_predictor 
       print( f"replaced the predictor to be the {['slim','full'][self.full_predictor]} predictor" )
+
+  def save_state( self, savepath):
+      """ Reqruired for the saver, which predictor/ internal variables it currently has"""
+      if savepath[-1] != '/':
+          savepath = savepath + '/'
+      save_kwargs = dict( full_predictor=self.full_predictor )
+      pickle.dump( save_kwargs, open( savepath + 'model_state.pkl', 'wb' ) )
+
+  def recover_state( self, load_path):
+      """ get the state of the internal variables and apply it as the model was dumped """
+      if load_path[-1] != '/':
+          load_path = load_path + '/'
+      load_kwargs = pickle.load( open( load_path + 'model_state.pkl', 'rb' ) )
+      self.full_predictor = not load_kwargs['full_predictor']
+      self.replace_predictor()
+      
+
+
+      
+
 
   def call( self, images, level=False, only_features=False, training=False):
     """
@@ -457,6 +477,23 @@ class VVEnet( SlimNet):
     print( f'setting the double V net to be enabled={enable}')
     self.freeze_extrapredictor( not enable)
 
+  def save_state( self, savepath):
+      """ Reqruired for the saver, which predictor/ internal variables it currently has"""
+      if savepath[-1] != '/':
+          savepath = savepath + '/'
+      save_kwargs = dict( full_predictor=self.full_predictor, enabled=self.enabled )
+      pickle.dump( save_kwargs, open( savepath + 'model_state.pkl', 'wb' ) )
+
+  def recover_state( self, load_path):
+      """ get the state of the internal variables and apply it as the model was dumped """
+      if load_path[-1] != '/':
+          load_path = load_path + '/'
+      load_kwargs = pickle.load( open( load_path + 'model_state.pkl', 'rb' ) )
+      self.full_predictor = not load_kwargs['full_predictor']
+      self.replace_predictor()
+      self.enable_doble( load_kwargs['enabled'] )
+      
+
   def high_level_prediction( self, images, training=False):
     down_features = [images]
     for layer in self.direct_down:
@@ -507,7 +544,7 @@ class VVEnet( SlimNet):
                   contains the features and the original image (in that order)
     """
     prediction = super().predict_tip( features, training=training, **layer_kwargs)
-    if self.enable:
+    if self.enabled:
         prediction += self.high_level_prediction( images, training=training, **layer_kwargs )
     return prediction
 
