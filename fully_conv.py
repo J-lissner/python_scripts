@@ -63,7 +63,11 @@ class MultilevelNet( ABC):
       sliced_args = get.slice_args( jj, None, *inputs)
       sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
       prediction.append( self( *sliced_args, **sliced_kwargs ) )
-      return concatenate( prediction, axis=0) 
+      if isinstance( prediction[0], (list,tuple) ): #multilevel prediction
+         prediction = [ concatenate( x, axis=0) for x in zip( *prediction)]  
+      else:
+          prediction = concatenate( prediction, axis=0) 
+      return prediction
 
   def freeze_all( self, freeze=True):
       """ 
@@ -288,11 +292,9 @@ class SlimNet( Model, MultilevelNet):
     ## have the branch which gives the side prediction, for now
     ## with constant channel amount
     for i in range( n_levels):
-        maxpool = False if i == 0 else True
         n_current = channel_function( i, n_channels)
-        n_upsample = channel_function( i, n_channels)
-        self.down_path.append( InceptionEncoder( n_current, maxpool=maxpool) ) 
-        self.up_path.append( FeatureConcatenator( n_upsample) )
+        self.down_path.append( InceptionEncoder( n_current, maxpool=(i==0) ) ) 
+        self.up_path.append( FeatureConcatenator( n_current) )
         self.side_predictors.append( SidePredictor( n_current, n_out ) )
     self.up_path = self.up_path[::-1]
     self.side_predictors = self.side_predictors[::-1]
@@ -478,7 +480,7 @@ class VVEnet( SlimNet):
     self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
     self.bypass = Add()
     for i in range( v_levels):
-        self.direct_down.append( InceptionEncoder( v_function(i, v_channels) ) )
+        self.direct_down.append( InceptionEncoder( v_function(i, v_channels, maxpool=(i==0) ) ) )
         self.direct_up.append(   InceptionUpsampler( v_function(v_levels-i-2, v_channels) ) )
         for j in range( n_conv):
             self.direct_down[-1].append( conv_layer( v_function(i, v_channels) ) )
