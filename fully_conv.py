@@ -293,7 +293,7 @@ class SlimNet( Model, MultilevelNet):
     ## with constant channel amount
     for i in range( n_levels):
         n_current = channel_function( i, n_channels)
-        self.down_path.append( InceptionEncoder( n_current, maxpool=(i==0) ) ) 
+        self.down_path.append( InceptionEncoder( n_current, maxpool=(i>0) ) ) 
         self.up_path.append( FeatureConcatenator( n_current) )
         self.side_predictors.append( SidePredictor( n_current, n_out ) )
     self.up_path = self.up_path[::-1]
@@ -480,7 +480,7 @@ class VVEnet( SlimNet):
     self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
     self.bypass = Add()
     for i in range( v_levels):
-        self.direct_down.append( InceptionEncoder( v_function(i, v_channels, maxpool=(i==0) ) ) )
+        self.direct_down.append( InceptionEncoder( v_function(i, v_channels, maxpool=(i>0) ) ) )
         self.direct_up.append(   InceptionUpsampler( v_function(v_levels-i-2, v_channels) ) )
         for j in range( n_conv):
             self.direct_down[-1].append( conv_layer( v_function(i, v_channels) ) )
