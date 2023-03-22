@@ -24,7 +24,7 @@ def Selu( x, training=None, **kwargs):
     """
     return selu( x, **kwargs)
 
-class MsPredictor( Model):
+class MsPredictor( Layer):
     def __init__( self, n_channels, n_out=2, *args, **kwargs):
         super().__init__( *args, **kwargs)
         self.upsampler = UpSampling2D()
@@ -39,7 +39,7 @@ class MsPredictor( Model):
         self.block.append( Conv2D( n_out, kernel_size=1, strides=1) ) 
 
 
-    def call( self, image, previous_prediction=None, training=False):
+    def __call__( self, image, previous_prediction=None, training=False):
         """
         Predict the layer by giving the machine learned prediction using
         the coarse grained image, and if the prediction of a previous layer
@@ -50,8 +50,8 @@ class MsPredictor( Model):
             image = self.concatenator( [image, previous_prediction] )
         for layer in self.block:
             image = layer( image, training=training) #already full prediction
-        #if previous_prediction is not None:
-        #    image = image + previous_prediction
+        if previous_prediction is not None:
+            image = image + previous_prediction
         return image
 
 
