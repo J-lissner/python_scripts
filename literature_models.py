@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras import Model 
+#from tensorflow.keras import Model 
+from my_models import Model 
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Concatenate, Layer, concatenate
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
@@ -28,19 +29,19 @@ class InceptionNet( Model):
         dense_neurons = 1000 #keep it fixed, since there memory is ok
         side_channels =  128 
         n_channels = (np.array( n_channels )/channel_reduction).astype(int) #first 
-        print( [len(x) for x in inception_channels] )
         
         ## split in three parts for implementation. After each part the sidepredictor is 
         self.first_part = LayerWrapper()
         self.second_part = LayerWrapper()
         self.third_part = LayerWrapper()
         self.side_predictors = [ LayerWrapper(), LayerWrapper() ]
+        LRN = lambda *args, training=False, **kwargs:  tf.nn.local_response_normalization( *args, **kwargs)
         self.first_part.append( Conv2DPeriodic( n_channels[0], kernel_size=7, strides=2)  )
         self.first_part.append( MaxPool2DPeriodic( 3, strides=2) )
-        self.first_part.append( tf.nn.local_response_normalization)
+        self.first_part.append( LRN)
         self.first_part.append( Conv2D( n_channels[1], kernel_size=1 ) )
         self.first_part.append( Conv2DPeriodic( n_channels[2], kernel_size=3 ) )
-        self.first_part.append( tf.nn.local_response_normalization)
+        self.first_part.append( LRN)
         self.first_part.append( MaxPool2DPeriodic( 3, strides=2) )
         for i in range( 3): #first three inception modules
             n_current = [ x[i] for x in inception_channels]

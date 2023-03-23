@@ -1,5 +1,4 @@
 import tensorflow as tf
-from tensorflow.keras import Model
 from tensorflow.keras.activations import relu, selu
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Layer
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
@@ -49,9 +48,9 @@ class InceptionModule( Layer):
             n_channels = [ n_channels[1], n_channels, n_channels, n_channels[1] ]
         Conv1x1 = lambda n: Conv2D( n, kernel_size=1)
         self.architecture = LayerWrapper( [Conv1x1( n_channels[0] )] )
-        self.architecture.append( [Conv1x1( n_channels[1][0]), Conv2DPeriodic( n_channels[1][1], kernel_size=3)] )
-        self.architecture.append( [Conv1x1( n_channels[2][0]), Conv2DPeriodic( n_channels[2][1], kernel_size=5)] )
-        self.architecture.append( [MaxPool2DPeriodic( 3, strides=1), Conv1x1( n_channels[-1]) ]  )
+        self.architecture[-1].append( [Conv1x1( n_channels[1][0]), Conv2DPeriodic( n_channels[1][1], kernel_size=3)] )
+        self.architecture[-1].append( [Conv1x1( n_channels[2][0]), Conv2DPeriodic( n_channels[2][1], kernel_size=5)] )
+        self.architecture[-1].append( [MaxPool2DPeriodic( 3, strides=1), Conv1x1( n_channels[-1]) ]  )
         self.architecture.append( Concatenate() )
 
     def __call__( self, images, **layer_kwargs):

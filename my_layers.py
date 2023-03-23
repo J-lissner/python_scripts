@@ -10,12 +10,14 @@ from math import ceil, floor
 class LayerWrapper(ListWrapper):
   """
   This function is like a callable ListWrapper. It is used to store any
-  type  of layer(of deep inception modules and generic layers), also inception 
-  modules followed (or preceeded) by normal layers. Is able to consider
-  deep inception modules but not nested inception modules. 
+  type  of layer(of deep inception modules and generic layers).
+  Each entry in the list (of the ListWrapper) is treated as one module. This
+  module may contain a generic 'Layer', or another list, which then specifies
+  the custom modules, i.e. resnet/inception modules. (which is a list of 
+  layers/lists, each entry/sublist specifying a 'branch')
+  It is able to consider deep inception modules but not nested inception modules. 
   Normal layers are given by layer classes, Inception modules are given by
   a list of layers, and deep inception modules are given by nested lists of layers.
-  Depending on the 'layers' its also able to reconstruct the resnet module
   """
   def __init__( self, *args, **kwargs):
       super().__init__( list(args), **kwargs)
