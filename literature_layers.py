@@ -24,6 +24,42 @@ def Selu( x, training=None, **kwargs):
     """
     return selu( x, **kwargs)
 
+class InceptionModule( Layer):
+    """ 
+    Literature inception module with 1x1 bypass, 3x3/5x5 conv with preceeding 
+    1x1 reduction, and 3x3 maxpool with postceeding 1x1 conv
+    """
+    def __init__( self, n_channels):
+        """
+        Invoke the architecture of the module. The n_channels parameter 
+        is highly flexible and behaves different based on lengths
+        Parameters:
+        -----------
+        n_channels:     int, or list of ints
+                        how many channels per branch. 
+                        If an int is given, all layers have this many channels
+                        If a list of 2 is given, it defines the reduction (on 3x3/5x5) and 
+                        branch output of each branch in the second index
+                        if a list of [int, list, list, int] is given each nest corresponds to 
+                        the branch in this order: 1x1bypass, 3x3, 5x5, pool-1x1 
+        """
+        if isinstance( n_channels, int):
+            n_channels = [ n_channels, 2*[n_channels], 2*[n_channels], n_channels]] 
+        elif len( n_channels) == 2:
+            n_channels = [ n_channels[1], n_channels, n_channels, n_channels[1] ]
+        conv1x1 = lambda n: Conv2D( n, kernel_size=1)
+        self.architecture = LayerWrapper( [conv1x1( n_channels[0]] ) )
+        self.architecture.append( [Conv1x1( n_channels[1][0]), Conv2DPeriodic( n_channels[1][1], kernel_size=3)] )
+        self.architecture.append( [Conv1x1( n_channels[2][0]), Conv2DPeriodic( n_channels[2][1], kernel_size=5)] )
+        self.architecture.append( [MaxPool2DPeriodic( 3, strides=1), Conv1x1( n_channels[-1]) ]  )
+        self.architecture.append( Concat() )
+
+    def __call__( self, images, **layer_kwargs):
+        """
+        Evaluate the inception module (oneliner through LayerWrapper)
+        """
+        return self.architecture( images, **layer_kwargs) 
+
 class MsPredictor( Layer):
     def __init__( self, n_channels, n_out=2, *args, **kwargs):
         super().__init__( *args, **kwargs)

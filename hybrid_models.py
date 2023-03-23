@@ -236,43 +236,6 @@ class VolBypass( Model):
     return x_fts + x_vol
 
 
-  def batched_partial_prediction( self, n_batches, predictor, *inputs, **kwargs):
-    """
-    predict the given data in batches and return the prediction
-    takes variable inputs because this method is inherited to more
-    complicated models.
-    Parameters:
-    -----------
-    n_batches:  int
-                how many batches to split the input data into
-    predictor:  function
-                method of self to give partial prediction
-    *inputs:    list of tf.tensor like
-                input data to predict
-    **kwargs:   other keyworded options for the call,
-                also takes input data
-    Returns:
-    --------
-    prediction: tensorflow.tensor
-                prediction of the model when using predictor
-    """
-    if n_batches == 1:
-        return predictor( *inputs, **kwargs)
-    prediction = []
-    n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
-    for i in range( n_batches-1):
-        ii = i* n_samples//n_batches
-        jj = (i+1)* n_samples//n_batches
-        sliced_args = get.slice_args( ii, jj, *inputs)
-        sliced_kwargs = get.slice_kwargs( ii, jj, **kwargs) 
-        prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
-    sliced_args = get.slice_args( jj, None, *inputs)
-    sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
-    prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
-    return concatenate( prediction, axis=0) 
-
-
-
 
 class DualInception( VolBypass):
   """

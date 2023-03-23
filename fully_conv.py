@@ -28,7 +28,7 @@ class MultilevelNet( ABC):
       #self.n_levels = n_levels
 
 
-  def batched_prediction( self, batchsize, *inputs, **kwargs):
+  def batched_prediction( self, batchsize, *inputs, predictor=None, **kwargs):
       """
       predict the given data in batches and return the prediction
       takes variable inputs because this method is inherited to more
@@ -41,6 +41,8 @@ class MultilevelNet( ABC):
                   how large the batches should be
       *inputs:    list of tf.tensor like
                   input data to predict
+      predictor:  callable, default None
+                  which method to evaluate of the model, defaults to self.__call__
       **kwargs:   other keyworded options for the call,
                   also takes input data
       Returns:
@@ -48,21 +50,25 @@ class MultilevelNet( ABC):
       prediction: tensorflow.tensor
                   prediction of the model when using self.call()
       """
+      ## input processing and variable allocation
       n_batches =  int(inputs[0].shape[0]// batchsize)
       if n_batches == 1:
           return self( *inputs, **kwargs)
+      if predictor is None:
+          predictor = self
       prediction = []
       n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
       jj = 0 #to catch 1 batch
+      ## predict each batch
       for i in range( n_batches-1):
           ii = i* n_samples//n_batches
           jj = (i+1)* n_samples//n_batches
           sliced_args = get.slice_args( ii, jj, *inputs)
           sliced_kwargs = get.slice_kwargs( ii, jj, **kwargs) 
-          prediction.append( self( *sliced_args, **sliced_kwargs ) )
+          prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
       sliced_args = get.slice_args( jj, None, *inputs)
       sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
-      prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
       if isinstance( prediction[0], (list,tuple) ): #multilevel prediction
          prediction = [ concatenate( x, axis=0) for x in zip( *prediction)]  
       else:
@@ -374,7 +380,7 @@ class SlimNet( Model, MultilevelNet):
             level_features = self.up_path[i]( down_path.pop( -1), feature_channels, training=training) 
         else:
             level_features = self.up_path[i]( down_path.pop( -1), feature_channels, prediction, training=training) 
-    # level_features now concatenated all required channels
+    # level_features now concatenated all required channels, also the image from 'down_path'
     if only_features: return level_features  #for finetuning training
     if self.direct_upsampling:
         prediction = self.predictor( level_features, prediction, training=training )
@@ -480,8 +486,8 @@ class VVEnet( SlimNet):
     self.extra_predictor.append( Conv2D( n_out, kernel_size=1 ) )
     self.bypass = Add()
     for i in range( v_levels):
-        self.direct_down.append( InceptionEncoder( v_function(i, v_channels, maxpool=(i>0) ) ) )
-        self.direct_up.append(   InceptionUpsampler( v_function(v_levels-i-2, v_channels) ) )
+        self.direct_down.append( InceptionEncoder( v_function(i, v_channels), maxpool=(i>0) )) 
+        self.direct_up.append(   InceptionUpsampler( v_function(v_levels-i-2, v_channels) ))
         for j in range( n_conv):
             self.direct_down[-1].append( conv_layer( v_function(i, v_channels) ) )
             self.direct_up[-1].append(   conv_layer( v_function(v_levels-i-2, v_channels) ) )

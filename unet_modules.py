@@ -140,7 +140,7 @@ class SidePredictor( Layer):
     feature_channels = self.feature_processor( feature_channels, *layer_args, **layer_kwargs)
     if prediction is None:
         prediction       = self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs)
-    else: #passed to the predictor
+    else: #direct upsampling of the previous prediction for 'delta learning'
         prediction = (self.direct_upsampler( prediction) + 
                     self.side_predictor( [feature_channels, cg_image], *layer_args, **layer_kwargs) )
     return prediction, feature_channels

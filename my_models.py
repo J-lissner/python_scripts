@@ -25,7 +25,7 @@ class Model( Model):
       self.architecture = []
 
 
-  def batched_prediction( self, batchsize, *inputs, **kwargs):
+  def batched_prediction( self, batchsize, *inputs, predictor=None, **kwargs):
       """
       predict the given data in batches and return the prediction
       takes variable inputs because this method is inherited to more
@@ -43,9 +43,11 @@ class Model( Model):
       prediction: tensorflow.tensor
                   prediction of the model when using self.call()
       """
+      if predictor is None:
+          predictor = self
       n_batches =  int(inputs[0].shape[0]// batchsize)
       if n_batches == 1:
-          return self( *inputs, **kwargs)
+          return predictor( *inputs, **kwargs)
       prediction = []
       n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
       jj = 0 #to catch 1 batch
@@ -54,10 +56,10 @@ class Model( Model):
           jj = (i+1)* n_samples//n_batches
           sliced_args = get.slice_args( ii, jj, *inputs)
           sliced_kwargs = get.slice_kwargs( ii, jj, **kwargs) 
-          prediction.append( self( *sliced_args, **sliced_kwargs ) )
+          prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
       sliced_args = get.slice_args( jj, None, *inputs)
       sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
-      prediction.append( self( *sliced_args, **sliced_kwargs ) )
+      prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
       return concatenate( prediction, axis=0) 
 
 
