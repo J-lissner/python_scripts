@@ -2,69 +2,12 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa
 from tensorflow.math import ceil
-from tensorflow.python.trackable.data_structures import ListWrapper
 from tensorflow.keras.layers import Layer, Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D
 from tensorflow.keras.layers import Concatenate, Add, concatenate
 
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
-
-
-
-class LayerWrapper(ListWrapper):
-  """
-  This function is like a callable ListWrapper. It is used to store any
-  type of layer, also inception modules followed (or preceeded) by normal
-  layers. Is able to consider deep inception modules but not nested inception
-  modules. 
-  Normal layers are given by layer classes, Inception modules are given by
-  a list of layers, and deep inception modules are given by nested lists of layers.
-  """
-  def __init__( self, *args, **kwargs):
-      super().__init__( list(args), **kwargs)
-
-  def __call__( self, images, *layer_args, **layer_kwargs):
-      """
-      predict the current images using the layers with the <images> data.
-      This function takes in any layers put into list up to 1 inception
-      module (no nested inception modules) with arbitrary depth in each
-      branch
-      Parameters:
-      -----------
-      layers:     list or nested list of tf.keras.Layers
-                  layers to conduct the prediction with
-      images:     tensorflow.tensor like
-                  image data of at least 4 dimensions
-      *layer_kw/args: 
-                  additional inputs directy passed to each layer
-      """
-      for layer in self:
-          if isinstance( layer,list): #inception module
-              inception_pred = []
-              for layer in layer:
-                  if isinstance( layer, list): #deep inception module
-                      inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
-                      for deeper_layer in layer[1:]:
-                          inception_pred[-1] = deeper_layer(inception_pred[-1], *layer_args, **layer_kwargs )
-                  else: #only parallel convolutions
-                      pred = layer(images, *layer_args, **layer_kwargs) 
-                      inception_pred.append(pred)
-              images = inception_pred
-          else: #simple layer, or concatenator after inception module
-              images = layer( images, *layer_args, **layer_kwargs) 
-      return images
-
-  def freeze( self, freeze=True):
-    for layer in self:
-        if isinstance( layer, LayerWrapper):
-            layer.freeze( freeze) 
-        elif isinstance( layer, list):
-            for sublayer in layer:
-                sublayer.trainable = not freeze
-        else:
-            layer.trainable = not freeze
-
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
 
 class SidePredictor( Layer):
   """

@@ -457,7 +457,7 @@ class DecoupledFeatures( DualInception):
     super( DecoupledFeatures, self).__init__( n_output, *args, **kwargs)
     self.build_feature_regressor()
 
-  def call( self, features, images, extra_features=[], training=False):
+  def call( self, images, features, extra_features=[], training=False):
     """
     Predict the full model with all subparts
     If variable contrast is trained (i.e. vol slice.stop >1 then the phase contrast
@@ -489,7 +489,7 @@ class VariableContrast( DecoupledFeatures):
       self.extra_layers.append( Dense( self.n_output) )
   
 
-  def call( self, features, images, extra_features, training=False):
+  def call( self, images, features, extra_features, training=False):
     """
     Predict the full model with all subparts
     requires the extra features which are put on top of both feature 
@@ -555,7 +555,7 @@ class FullCombination( DecoupledFeatures ):
     return x_combined
 
 
-  def call( self, features, images, training=False):
+  def call( self, images, features, training=False):
     """
     predict the full model, CARE: EXTRA FEATURES NOT IMPLEMENTED HERE
     (since this model was worse than decoupled features and will not be used subsequently

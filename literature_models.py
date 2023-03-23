@@ -3,17 +3,18 @@ import numpy as np
 from tensorflow.keras import Model 
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Concatenate, Layer, concatenate
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
-from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
+from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor, InceptionModule
 from fully_conv import MultilevelNet
 
 
 class InceptionNet( Model):
-    def __init__( self, n_out, channel_reduction=2, ):
+    def __init__( self, n_out, channel_reduction=2, *args, **kwargs):
         """
         Build the inception net as is in the literature (szegedy2015going)
         For now i will jsut brute force the number of channels
         """
+        kwargs.pop( 'n_vol', 1) #catch default argument
         super().__init__( n_out, *args, **kwargs )
         n_3 = lambda n, factor=2: [n, factor*n]
         inception_channels = []
@@ -22,7 +23,7 @@ class InceptionNet( Model):
                                       [160, 320], [192,384] ] ) #1x1->3x3
         inception_channels.append( [ [16,32], [32,96], [16,48], [24,64], [24,64], [32, 64], [32, 128], [32, 128], [48,128] ]) #1x1->5x5
         inception_channels.append( [32, 64, 64, 64, 64, 64, 128, 128, 128] ) #pool -> 1x1
-        inception_channels = [ (np.array(x)/channel_reduction).astype(int) for x in inception_channels)
+        inception_channels = [ (np.array(x)/channel_reduction).astype(int) for x in inception_channels ]
         n_channels = [64, 64, 192] #for the three preceeding/postceeding operations
         dense_neurons = 1000 #keep it fixed, since there memory is ok
         side_channels =  128 
@@ -30,7 +31,11 @@ class InceptionNet( Model):
         print( [len(x) for x in inception_channels] )
         
         ## split in three parts for implementation. After each part the sidepredictor is 
-        self.first_part = [Conv2DPeriodic( n_channels[0], kernel_size=7, strides=2)] 
+        self.first_part = LayerWrapper()
+        self.second_part = LayerWrapper()
+        self.third_part = LayerWrapper()
+        self.side_predictors = [ LayerWrapper(), LayerWrapper() ]
+        self.first_part.append( Conv2DPeriodic( n_channels[0], kernel_size=7, strides=2)  )
         self.first_part.append( MaxPool2DPeriodic( 3, strides=2) )
         self.first_part.append( tf.nn.local_response_normalization)
         self.first_part.append( Conv2D( n_channels[1], kernel_size=1 ) )
@@ -43,11 +48,9 @@ class InceptionNet( Model):
             if i == 1:
                 self.first_part.append( MaxPool2DPeriodic( 3, strides=2) )
         ## now comes the first branch off during training
-        self.second_part = []
         for i in range( 3, 3+3): #next three inception modules
             n_current = [ x[i] for x in inception_channels]
             self.second_part.append( InceptionModule( n_current) )
-        self.third_part = []
         for i in range( 6, 6+3): #next three inception modules
             n_current = [ x[i] for x in inception_channels]
             self.third_part.append( InceptionModule( n_current) )
@@ -57,26 +60,25 @@ class InceptionNet( Model):
         self.third_part.append( Flatten())
         self.third_part.append( Dropout(0.4))
         self.third_part.append( Dense( dense_neurons, activation='selu') )
-        self.third_part.append( Dense( n_out, activation='none') )
+        self.third_part.append( Dense( n_out, activation=None) )
 
-        self.side_predictors = [ [] []]
         for i in range( 2): #both are the same
-            self.side_predictors[i].append( AvgPool2dPeriodic( 5, strides=3))
-            self.side_predictors[i].append( Conv2D( side_channels, strides=3))
+            self.side_predictors[i].append( AvgPool2DPeriodic( 5, strides=3))
+            self.side_predictors[i].append( Conv2D( side_channels, kernel_size=1))
             self.side_predictors[i].append( Flatten() )
             self.side_predictors[i].append( Dense( dense_neurons, activation='selu' ) )
             self.side_predictors[i].append( Dropout(0.7) )
-            self.side_predictors[i].append( Dense( n_out, activation='none' ) )
+            self.side_predictors[i].append( Dense( n_out, activation=None ) )
 
     def call( self, images, side_prediction=False, training=False):
         images = self.first_part( images, training=training)
-        if side_prediction:
+        if side_prediction is True:
             side_predictions = [ self.side_predictors[0]( images, training=training) ]
         images = self.second_part( images, training=training)
-        if side_prediction:
+        if side_prediction is True:
             side_predictions.append( self.side_predictors[1]( images, training=training) )
         images = self.third_part( images, training=training)
-        if side_prediction:
+        if side_prediction is True:
             return images, side_predictions #also side predictions for loss
         return images #return full prediction
 

@@ -2,45 +2,69 @@ from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
 from tensorflow.keras.layers import Conv2DTranspose
 from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate 
 from tensorflow.python.ops import nn, nn_ops
+from tensorflow.python.trackable.data_structures import ListWrapper
 from math import ceil, floor
 
-def pad_periodic( kernel_size, data):
-    """
-    Pad a given tensor of shape (n_batch, n_row, n_col, n_channels) 
-    periodically by kernel_size//2
-    Parameters:
-    -----------
-    kernel_size:    list of ints or int
-                    size of the (quadratic) kernel
-    data:           tensorflow.tensor
-                    image data of at least 3 channels, n_sample x n_x x n_y
-    Returns:
-    --------
-    padded_data:    tensorflow.tensor
-                    the padded data by the minimum required width
-    """
-    ## for now i assume that on even sized kernels the result is in the top left
-    if isinstance( kernel_size, int):
-        pad_l = kernel_size//2 #left
-        pad_u = kernel_size//2 #up
-        pad_r = pad_l - 1 if (kernel_size %2) == 0 else pad_l #right
-        pad_b = pad_u - 1 if (kernel_size %2) == 0 else pad_u #bot
-    else: 
-        pad_l = (kernel_size[1] )//2  #left
-        pad_u = (kernel_size[0] )//2 #bot
-        pad_r = pad_l - 1 if (kernel_size[1] %2) == 0 else pad_l #right
-        pad_b = pad_u - 1 if (kernel_size[0] %2) == 0 else pad_u #bot
-    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
-    if pad_r == 0:
-        top_pad = []
-    else:
-        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
-    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
-    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
-    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
-    return data
 
 
+class LayerWrapper(ListWrapper):
+  """
+  This function is like a callable ListWrapper. It is used to store any
+  type  of layer(of deep inception modules and generic layers), also inception 
+  modules followed (or preceeded) by normal layers. Is able to consider
+  deep inception modules but not nested inception modules. 
+  Normal layers are given by layer classes, Inception modules are given by
+  a list of layers, and deep inception modules are given by nested lists of layers.
+  Depending on the 'layers' its also able to reconstruct the resnet module
+  """
+  def __init__( self, *args, **kwargs):
+      super().__init__( list(args), **kwargs)
+
+  def __call__( self, images, *layer_args, **layer_kwargs):
+      """
+      predict the current images using the layers with the <images> data.
+      This function takes in any layers put into list up to 1 inception
+      module (no nested inception modules) with arbitrary depth in each
+      branch
+      Parameters:
+      -----------
+      layers:     list or nested list of tf.keras.Layers
+                  layers to conduct the prediction with
+      images:     tensorflow.tensor like
+                  image data of at least 4 dimensions
+      *layer_kw/args: 
+                  additional inputs directy passed to each layer
+      """
+      for layer in self:
+          if isinstance( layer,list): #inception module
+              inception_pred = []
+              for layer in layer:
+                  if isinstance( layer, list): #deep inception module
+                      inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
+                      for deeper_layer in layer[1:]:
+                          inception_pred[-1] = deeper_layer(inception_pred[-1], *layer_args, **layer_kwargs )
+                  else: #only parallel convolutions
+                      pred = layer(images, *layer_args, **layer_kwargs) 
+                      inception_pred.append(pred)
+              images = inception_pred
+          else: #simple layer, or concatenator after inception module
+              images = layer( images, *layer_args, **layer_kwargs) 
+      return images
+
+  def freeze( self, freeze=True):
+    for layer in self:
+        if isinstance( layer, LayerWrapper):
+            layer.freeze( freeze) 
+        elif isinstance( layer, list):
+            for sublayer in layer:
+                sublayer.trainable = not freeze
+        else:
+            layer.trainable = not freeze
+
+
+
+
+#### Single layers 
 class Conv2DPeriodic( Conv2D):
     """
     shadows the Conv2D layer from keras and implements a 
@@ -105,7 +129,6 @@ class AvgPool2DPeriodic( AveragePooling2D):
         else: 
             self.k_size = args[0]
 
-
     def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
             return super().__call__( data, *args, **kwargs)
@@ -141,7 +164,6 @@ class MaxPool2DPeriodic( MaxPool2D):
         else: 
             self.k_size = args[0]
 
-
     def __call__(self, data, *args, **kwargs):
         if self.pad == 'valid':
             return super().__call__( data, *args, **kwargs)
@@ -151,6 +173,102 @@ class MaxPool2DPeriodic( MaxPool2D):
             raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
 
 
+class Conv2DTransposePeriodic( Conv2DTranspose):
+    def __init__( self, *args, **kwargs):
+        kwargs['padding'] = 'same' #enforce no padding and do the stuff by myself
+        super(Conv2DTransposePeriodic, self).__init__( *args, **kwargs)
+        if 'kernel_size' in kwargs:
+            kernel_size = kwargs['kernel_size']
+        else: 
+            kernel_size = args[1]
+        if 'strides' in kwargs:
+            stride = kwargs['strides']
+        else: 
+            stride = args[2] 
+        self.p_size = kernel_size//stride #might be a little excessive
+
+    def __call__(self, data, *args, **kwargs):
+        """
+        shadow the original call, simply pad before upsampling and then 
+        cut away the excessive part
+        """
+        upsampled = super().__call__( upsampling_padding( self.p_size, data ), *args, **kwargs)
+        idx = max(2*self.p_size, 2)
+        return upsampled[:, idx:-idx, idx:-idx ]
+
+
+#### required functions (padding for now
+def pad_periodic( kernel_size, data):
+    """
+    Pad a given tensor of shape (n_batch, n_row, n_col, n_channels) 
+    periodically by kernel_size//2
+    Parameters:
+    -----------
+    kernel_size:    list of ints or int
+                    size of the (quadratic) kernel
+    data:           tensorflow.tensor
+                    image data of at least 3 channels, n_sample x n_x x n_y
+    Returns:
+    --------
+    padded_data:    tensorflow.tensor
+                    the padded data by the minimum required width
+    """
+    ## for now i assume that on even sized kernels the result is in the top left
+    if isinstance( kernel_size, int):
+        pad_l = kernel_size//2 #left
+        pad_u = kernel_size//2 #up
+        pad_r = pad_l - 1 if (kernel_size %2) == 0 else pad_l #right
+        pad_b = pad_u - 1 if (kernel_size %2) == 0 else pad_u #bot
+    else: 
+        pad_l = (kernel_size[1] )//2  #left
+        pad_u = (kernel_size[0] )//2 #bot
+        pad_r = pad_l - 1 if (kernel_size[1] %2) == 0 else pad_l #right
+        pad_b = pad_u - 1 if (kernel_size[0] %2) == 0 else pad_u #bot
+    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
+    if pad_r == 0:
+        top_pad = []
+    else:
+        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
+    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
+    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
+    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
+    return data
+
+
+def upsampling_padding( pad_size, data):
+    """
+    periodically pad the image before upsampling to enforce
+    periodic adjacency correctness
+    Parameters:
+    -----------
+    pad_size:       list of ints or int
+                    size of the padding in each dimension
+    data:           tensorflow.tensor
+                    image data of at least 3 channels, n_sample x n_x x n_y
+    Returns:
+    --------
+    padded_data:    tensorflow.tensor
+                    the padded data by the minimum required width
+    """
+    ## for now i assume that on even sized kernels the result is in the top left
+    if isinstance( pad_size, int):
+        pad_size = 2*[pad_size]
+    pad_l = pad_size[1]
+    pad_u = pad_size[0]
+    pad_r = pad_l
+    pad_b = pad_u
+    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
+    if pad_r == 0:
+        top_pad = []
+    else:
+        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
+    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
+    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
+    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
+    return data
+
+
+### modules
 class InceptionModule():
   def __init__( self, n_out=32, n_branch=12, downsample=4, max_kernel=5, pooling='average', activation='selu'):
     """
@@ -222,124 +340,3 @@ class InceptionModule():
         x = layer( x, training=training)
     return x
 
-
-class LiteratureInception():
-  def __init__( self, n_branch=12, activation='selu'): #n_out=32
-    """
-    Define an inception module which has a 1x1 bypass and multiple two deep
-    convolutional branches. The module architecture is directly copied
-    from the paper 'we need to go deeper'
-    Parameters:
-    -----------
-    n_branch:       int, default 12
-                    number of channels per branch in inception module
-    activation:     string, default 'selu'
-                    activation function at each convolutional kernel
-    """
-    self.inception = [] #will be a nested list where each sublist is one branch
-    conv = lambda size: Conv2D( filters=n_branch, kernel_size=size, strides=1, activation=activation)
-    bypass = [conv( 1)]
-    concat = [Concatenate()]
-    #concat.append( Conv2D( filters=n_out, kernel_size=1, strides=1, activation=activation) )
-    #concat.append( BatchNormalization() )
-    ## first branch
-    self.inception.append( [conv(1)] )
-    self.inception[-1].append( conv(3) )
-    ## second branch
-    self.inception.append( [conv(1)] )
-    self.inception[-1].append( conv(5) )
-    ## third branch
-    self.inception.append( [MaxPool2D( 3, 1)] )
-    self.inception[-1].append( conv(5) )
-    self.inception.insert( bypass, 0)
-    self.inception.append( concat)
-
-
-  def __call__( self, images, training=False, *args, **kwargs):
-    """ 
-    evaluate the inception module, simply evaluate each branch and
-    keep the output of each branch in memory until concatenated 
-    """
-    x = []
-    ## evaluate each model separately, store the results in a list
-    for i in range( len( self.inception) -1 ):
-        for j in range( len( self.inception[i]) ):
-            if j == 0:
-                x.append( self.inception[i][j]( images, training=training) )
-            else:
-                x[i] = self.inception[i][j]( x[i], training=training ) 
-    ##concatenation (and 1x1 convo)
-    for layer in self.inception[-1]:
-        x = layer( x, training=training)
-    return x
-
-
-
-def transpose_padding(img, strides=(2,2),kernel=(5,5)):
-    #formula for padding is  (img.shape - 1)*strides
-    import numpy as np
-    shape = np.array( img.shape)
-    strides = np.array( strides)
-    kernel = np.array( kernel)
-    padding = kernel //2
-    output_padding = 0
-    formula = lambda shape, strides, kernel, padding: (shape -1)*strides + kernel- 2*padding + 0
-    new_shape = (shape -1)*strides + kernel- 2*padding + output_padding
-    print( new_shape )
-
-
-def upsampling_padding( pad_size, data):
-    """
-    periodically pad the image before upsampling to enforce
-    periodic adjacency correctness
-    Parameters:
-    -----------
-    pad_size:       list of ints or int
-                    size of the padding in each dimension
-    data:           tensorflow.tensor
-                    image data of at least 3 channels, n_sample x n_x x n_y
-    Returns:
-    --------
-    padded_data:    tensorflow.tensor
-                    the padded data by the minimum required width
-    """
-    ## for now i assume that on even sized kernels the result is in the top left
-    if isinstance( pad_size, int):
-        pad_size = 2*[pad_size]
-    pad_l = pad_size[1]
-    pad_u = pad_size[0]
-    pad_r = pad_l
-    pad_b = pad_u
-    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
-    if pad_r == 0:
-        top_pad = []
-    else:
-        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
-    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
-    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
-    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
-    return data
-
-
-class Conv2DTransposePeriodic( Conv2DTranspose):
-    def __init__( self, *args, **kwargs):
-        kwargs['padding'] = 'same' #enforce no padding and do the stuff by myself
-        super(Conv2DTransposePeriodic, self).__init__( *args, **kwargs)
-        if 'kernel_size' in kwargs:
-            kernel_size = kwargs['kernel_size']
-        else: 
-            kernel_size = args[1]
-        if 'strides' in kwargs:
-            stride = kwargs['strides']
-        else: 
-            stride = args[2] 
-        self.p_size = kernel_size//stride #might be a little excessive
-
-    def __call__(self, data, *args, **kwargs):
-        """
-        shadow the original call, simply pad before upsampling and then 
-        cut away the excessive part
-        """
-        upsampled = super().__call__( upsampling_padding( self.p_size, data ), *args, **kwargs)
-        idx = max(2*self.p_size, 2)
-        return upsampled[:, idx:-idx, idx:-idx ]

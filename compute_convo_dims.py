@@ -34,6 +34,20 @@ def output_dimension( input_resolution, kernel_size, stride=1, channels=1, paddi
         output_resolution = np.hstack( (output_resolution, channels) )
     return output_resolution
 
+
+def transpose_padding(img, strides=(2,2),kernel=(5,5)):
+    #formula for padding is  (img.shape - 1)*strides
+    import numpy as np
+    shape = np.array( img.shape)
+    strides = np.array( strides)
+    kernel = np.array( kernel)
+    padding = kernel //2
+    output_padding = 0
+    formula = lambda shape, strides, kernel, padding: (shape -1)*strides + kernel- 2*padding + 0
+    new_shape = (shape -1)*strides + kernel- 2*padding + output_padding
+    print( new_shape )
+
+
 if __name__ == '__main__':
     ke = [7,7,5,5]
     st = [2,2,2,2]
@@ -42,3 +56,19 @@ if __name__ == '__main__':
 
         output_dim  = output_dimension( output_dim, k, s)
     print( output_dim )
+
+
+
+
+
+def transpose_padding(img, strides=(2,2),kernel=(5,5)):
+    #formula for padding is  (img.shape - 1)*strides
+    import numpy as np
+    shape = np.array( img.shape)
+    strides = np.array( strides)
+    kernel = np.array( kernel)
+    padding = kernel //2
+    output_padding = 0
+    formula = lambda shape, strides, kernel, padding: (shape -1)*strides + kernel- 2*padding + 0
+    new_shape = (shape -1)*strides + kernel- 2*padding + output_padding
+    print( new_shape )
