@@ -71,16 +71,23 @@ class InceptionNet( Model):
             self.side_predictors[i].append( Dropout(0.7) )
             self.side_predictors[i].append( Dense( n_out, activation=None ) )
 
-    def call( self, images, side_prediction=False, training=False):
+    def call( self, images, dummy_input=False, training=False):
+        """
+        Predict the images using the incepiton net. If training
+        is true, the output is a list of three, with
+        'prediction', 'side_1', 'side_2' 
+        dummy_input is required to catch whatever for the 
+        code template which uses the hybrid models
+        """
         images = self.first_part( images, training=training)
-        if side_prediction is True:
+        if training is True:
             side_predictions = [ self.side_predictors[0]( images, training=training) ]
         images = self.second_part( images, training=training)
-        if side_prediction is True:
+        if training is True:
             side_predictions.append( self.side_predictors[1]( images, training=training) )
         images = self.third_part( images, training=training)
-        if side_prediction is True:
-            return images, side_predictions #also side predictions for loss
+        if training is True:
+            return [images, *side_predictions] #also side predictions for loss
         return images #return full prediction
 
 

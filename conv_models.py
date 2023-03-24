@@ -6,11 +6,53 @@ from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
-from my_layers import InceptionModule #, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, 
+from my_layers import InceptionModule, DeepInception, LayerWrapper #, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, 
 from hybrid_models import VolBypass
 from my_models import Model
 
 ##################### Convolutional Neural Networks ##################### 
+class ModularInception( Model): 
+  def __init__( self, n_output, n_channels=32, dense=[32,32,16,16], *args, **kwargs):
+      """
+      Build a very modal deep inception model which takes 2 (new) modular
+      deep inception block in a consecutive manner and has a dense block
+      thereafter
+      Parameters:
+      -----------
+      n_output:     int
+                    number of neurons to predict
+      n_channels:   int, default 32
+                    number of output channels per deep inception module
+                    scales with $n$ for the $n$-th deep inception block
+      dense:        list of ints, default [32,32,16,16]
+                    basically number of neurons in the dense part, always
+                    uses selu and batch normalization 
+      """
+      super().__init__( n_output, *args, **kwargs)
+      self.conv = [ DeepInception( n_channels), DeepInception( 2*n_channels) ]
+      self.conv.append( Flatten() )
+      self.dense = LayerWrapper()
+      for n_neuron in dense:
+          self.dense.append( Dense( n_neuron, activation='selu') )
+          self.dense.append( BatchNormalization() )
+      self.dense.append( Dense( n_output, activation=None) ) 
+ 
+  def freeze_conv( self, freeze=True):
+     """
+     freeze the entire thing, required for inheritance later
+     """
+     for layer in self.conv:
+         try: layer.freeze( freeze) #its a layer wrapper
+         except: pass #its flatten etc.
+     self.dense.freeze( freeze)
+
+  def call( self, images, *args, training=False):
+      for layer in self.conv:
+          images = layer( images, training=training)
+      return self.dense( images, training=training)
+
+
+
 class InceptionLike( Model):
   def __init__( self, n_output, input_size, activation=None, n_blocks=1, globalpool=False, *args, **kwargs):
     """

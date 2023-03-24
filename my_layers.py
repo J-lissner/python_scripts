@@ -1,5 +1,5 @@
 from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
-from tensorflow.keras.layers import Conv2DTranspose
+from tensorflow.keras.layers import Conv2DTranspose, Layer
 from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate 
 from tensorflow.python.ops import nn, nn_ops
 from tensorflow.python.trackable.data_structures import ListWrapper
@@ -30,8 +30,6 @@ class LayerWrapper(ListWrapper):
       branch
       Parameters:
       -----------
-      layers:     list or nested list of tf.keras.Layers
-                  layers to conduct the prediction with
       images:     tensorflow.tensor like
                   image data of at least 4 dimensions
       *layer_kw/args: 
@@ -271,6 +269,58 @@ def upsampling_padding( pad_size, data):
 
 
 ### modules
+class DeepInception( Layer):
+  def __init__( self, n_out, pooling='average', n_vol=None, *args, **kwargs):
+    """
+    So the general idea is to have a reusable module with the deep inception modules
+    I will start by just trying out a downsampling factor of 8 after each module
+    With no fancy bypasses and just averagepooling and convolution
+    General layout idea is to have different downsampling factors of average pooling
+    and then whatever convolution operations
+    Each branch has n_out channels, with a compression to n_out//2 channels before concatenation
+    """
+    super().__init__( *args, **kwargs)
+    if pooling in ['average', 'avg']:
+        pooling = AvgPool2DPeriodic
+    elif not isinstance( pooling, Layer):
+        pooling = MaxPool2DPeriodic
+    self.module = LayerWrapper( [] )
+    ## increasinlgy higher coarse graining branches
+    branch1 = [Conv2DPeriodic( n_out, kernel_size=5, strides=2) ]
+    branch1.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch1.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch1.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch1.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch1.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch2 = [pooling( 2)]
+    branch2.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch2.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch2.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch2.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch2.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch3 = [pooling( 4)]
+    branch3.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch3.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch3.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch3.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch4 = [pooling( 8)]
+    branch4.append( Conv2DPeriodic( n_out, kernel_size=5) )
+    branch4.append( Conv2DPeriodic( n_out, kernel_size=5) )
+    branch4.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    self.module[-1].extend( [branch1, branch2, branch3, branch4])
+    self.module.append( Concatenate() )
+    self.module.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
+
+  def freeze( self, freeze=True):
+      self.module.freeze( freeze)
+
+  def __call__( self, images, training=False):
+      """
+      args to catch the modality of the code for the hybrid models
+      """
+      return self.module( images, training=training)
+
+
 class InceptionModule():
   def __init__( self, n_out=32, n_branch=12, downsample=4, max_kernel=5, pooling='average', activation='selu'):
     """

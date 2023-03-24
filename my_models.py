@@ -99,25 +99,32 @@ class Model( Model):
 
 
 
+
 class RegularizedDense(Model):
-    def __init__(self, n_output, n_neuron=[16,16], activation=['selu','selu'], dropout=None, batch_norm=False, **regularization): #maybe do even "regularizer as input"
+    def __init__(self, n_output, n_neuron=[45,32,25], activation='selu', dropout=None, batch_norm=True, **kwargs): #maybe do even "regularizer as input"
         """
-        **regularization is the regularization options which are simply piped into the
-        dense layers from keras, defaults to None
-        Originally i had these options lying around:
-        kernel_regularizer='l2', kernel_initializer='he_normal'
+        Whatever dense model with batch normalization in the middle
         """
         super(RegularizedDense, self).__init__(n_output)
+        activation = [activation] if not isinstance( activation,list) else activation
+        dropout = 0.5 if dropout is True else dropout
         activation = Cycler( activation)
-        self.architecture = [ Dense( n_neuron[0], activation=next(activation), **regularization)]
+        self.architecture = [ Dense( n_neuron[0], activation=next(activation))]
         model = self.architecture
         for i in range( 1, len(n_neuron) ):
             if dropout:
                 model.append( Dropout( dropout) )
             if batch_norm is True:
                 model.append( BatchNormalization() )
-            model.append( Dense( n_neuron[i], activation=next(activation) , **regularization)  )
-        model.append( Dense(n_output, activation=None, **regularization) )
+            model.append( Dense( n_neuron[i], activation=next(activation))  )
+        model.append( Dense(n_output, activation=None) )
+
+    def call( self, x, *args, training=False):
+        if x.ndim == 4: #if we have the image data call then simply 
+            x = args[0] #overwrite the image data with the features
+        for layer in self.architecture:
+            x = layer( x, training=training)
+        return x
 
 
 
