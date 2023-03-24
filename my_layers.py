@@ -286,28 +286,45 @@ class DeepInception( Layer):
         pooling = MaxPool2DPeriodic
     self.module = LayerWrapper( [] )
     ## increasinlgy higher coarse graining branches
-    branch1 = [Conv2DPeriodic( n_out, kernel_size=5, strides=2) ]
-    branch1.append( Conv2DPeriodic( n_out, kernel_size=3) )
-    branch1.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
-    branch1.append( Conv2DPeriodic( n_out, kernel_size=3) )
-    branch1.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_out, kernel_size=3, strides=strides)
+    branch1 = [Conv2DPeriodic( n_out//2, kernel_size=5, strides=2) ]
+    branch1.append( conv_3x3() )
+    branch1.append( conv_3x3( strides=2) )
+    branch1.append( conv_3x3() )
+    branch1.append( conv_3x3( strides=2) )
+    branch1.append( conv_3x3() )
+    branch1.append( conv_3x3( strides=2) )
     branch1.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    ## second branch
     branch2 = [pooling( 2)]
     branch2.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
-    branch2.append( Conv2DPeriodic( n_out, kernel_size=3) )
-    branch2.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
-    branch2.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch2.append( conv_3x3() )
+    branch2.append( conv_3x3( strides=2) )
+    branch2.append( conv_3x3() )
+    branch2.append( conv_3x3( strides=2) )
+    branch2.append( conv_3x3() )
     branch2.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    ## third branch
     branch3 = [pooling( 4)]
     branch3.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
-    branch3.append( Conv2DPeriodic( n_out, kernel_size=3) )
-    branch3.append( Conv2DPeriodic( n_out, kernel_size=3) )
+    branch3.append( conv_3x3() )
+    branch3.append( conv_3x3( strides=2) )
+    branch3.append( conv_3x3() )
     branch3.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    ## fourth branch
     branch4 = [pooling( 8)]
-    branch4.append( Conv2DPeriodic( n_out, kernel_size=5) )
-    branch4.append( Conv2DPeriodic( n_out, kernel_size=5) )
+    branch4.append( Conv2DPeriodic( n_out, kernel_size=5, strides=2) )
+    branch4.append( conv_3x3() )
+    branch4.append( conv_3x3() )
     branch4.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
-    self.module[-1].extend( [branch1, branch2, branch3, branch4])
+    ## fifth branch
+    branch5 = [pooling( 16)]
+    branch5.append( Conv2DPeriodic( n_out, kernel_size=5) )
+    branch5.append( conv_3x3() )
+    branch5.append( conv_3x3() )
+    branch5.append( conv_3x3() )
+    branch5.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    self.module[-1].extend( [branch1, branch2, branch3, branch4, branch5])
     self.module.append( Concatenate() )
     self.module.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
 

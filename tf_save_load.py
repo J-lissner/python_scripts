@@ -25,7 +25,7 @@ class Saver():
     object below reassembles the model for further usage.
     The Retrain() object is intended to load and save the model again 
     """
-    def __init__(self, savepath, model_code, model_name, model, hard_overwrite=True, script_path=None):
+    def __init__(self, savepath, model_code, model_name, model=None, hard_overwrite=True, script_path=None):
         """
         Specify on where the model should be stored 
         as well as necessary information for reconstruction
@@ -72,7 +72,8 @@ class Saver():
         else:
             print( 'file for models not found, taking default path of scripts:', self.script_path)
             os.system( 'cp {} {}/custom_model.py'.format( self.script_path+model_code, self.savepath) ) 
-        self.model( model) 
+        if model is not None:
+            self.model( model) 
         self.scaling(3*[None], 3*[None]) #default no scaling saved for flexibility
 
     def model( self, model):
