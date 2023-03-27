@@ -36,7 +36,7 @@ def to_float32( *args, arraytype='numpy'):
 
 
 ## Generators cannot be tf.function s, it significantly slows down training....
-def batch_data( n_batches, data, shuffle=True):
+def batch_data( batchsize, data, shuffle=True):
     """
     Generator/Factory function, yields 'n_batches' batches when called in a for loop
     The last batch is the largest if the number of samples is not integer divisible by 'n_batches'
@@ -61,7 +61,7 @@ def batch_data( n_batches, data, shuffle=True):
         permutation = tf.random.shuffle( tf.range( n_samples, dtype=tf.int32) )
     else:
         permutation = tf.range( n_samples, dtype=tf.int32 ) 
-    batchsize = int( tf.math.floor( n_samples/ n_batches) )
+    n_batches = int( tf.math.floor( n_samples/ batchsize) )
     i         = -1 # set a value that for n_batches=1 it does return the whole set
     for i in range( n_batches-1):
         idx   = permutation[i*batchsize:(i+1)*batchsize]

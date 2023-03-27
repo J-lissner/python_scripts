@@ -1,5 +1,6 @@
 from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
 from tensorflow.keras.layers import Conv2DTranspose, Layer
+from tensorflow.keras.layers import GlobalAveragePooling2D, GlobalMaxPool2D
 from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate 
 from tensorflow.python.ops import nn, nn_ops
 from tensorflow.python.trackable.data_structures import ListWrapper
@@ -36,19 +37,19 @@ class LayerWrapper(ListWrapper):
                   additional inputs directy passed to each layer
       """
       for layer in self:
-          if isinstance( layer,list): #inception module
+          if not isinstance( layer,list): #simple layer, or concatenator after inception module
+              images = layer( images, *layer_args, **layer_kwargs) 
+          else: #parallel conlvolution operations
               inception_pred = []
               for layer in layer:
-                  if isinstance( layer, list): #deep inception module
+                  if not isinstance( layer, list): #only single parallel convolutions
+                      pred = layer(images, *layer_args, **layer_kwargs) 
+                      inception_pred.append(pred)
+                  else: #deep inception module
                       inception_pred.append( layer[0](images, *layer_args, **layer_kwargs) )
                       for deeper_layer in layer[1:]:
                           inception_pred[-1] = deeper_layer(inception_pred[-1], *layer_args, **layer_kwargs )
-                  else: #only parallel convolutions
-                      pred = layer(images, *layer_args, **layer_kwargs) 
-                      inception_pred.append(pred)
               images = inception_pred
-          else: #simple layer, or concatenator after inception module
-              images = layer( images, *layer_args, **layer_kwargs) 
       return images
 
   def freeze( self, freeze=True):
@@ -270,47 +271,40 @@ def upsampling_padding( pad_size, data):
 
 ### modules
 class DeepInception( Layer):
-  def __init__( self, n_out, pooling='average', n_vol=None, *args, **kwargs):
+  def __init__( self, n_features, pre_pooling=[2,4,8,10,20], post_pooling=['max'], n_conv=4, n_vol=None, *args, **kwargs):
     """
     So the general idea is to have a reusable module with the deep inception modules
     I will start by just trying out a downsampling factor of 8 after each module
     With no fancy bypasses and just averagepooling and convolution
     General layout idea is to have different downsampling factors of average pooling
     and then whatever convolution operations
-    Each branch has n_out channels, with a compression to n_out//2 channels before concatenation
+    Each branch has n_features channels, with a compression to n_features//2 channels before concatenation
     """
     super().__init__( *args, **kwargs)
-    if pooling in ['average', 'avg']:
-        pooling = AvgPool2DPeriodic
-    elif not isinstance( pooling, Layer):
-        pooling = MaxPool2DPeriodic
+    ## input preprocessing
+    for i in range( len( post_pooling)):
+        if isinstance( post_pooling[i], str) and 'max' in post_pooling[i].lower(): 
+            post_pooling[i] = GlobalMaxPool2D
+        elif isinstance( post_pooling[i], str) and 'av' in post_pooling[i].lower(): 
+            post_pooling[i] = GlobalAveragePool2D
+    if len( post_pooling) > 1:
+        post_pooling = LayerWrapper( [ [x() for x in post_pooling], Concatenate() ] ) #invoke layers and concat
+    else:
+        post_pooling = post_pooling[0]() #invoke layers
+    ## variable allocation
+    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_features, kernel_size=3, strides=strides)
     self.module = LayerWrapper( [] )
-    ## increasinlgy higher coarse graining branches
-    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_out, kernel_size=3, strides=strides)
-    branch1 = [Conv2DPeriodic( n_out, kernel_size=5, strides=2) ]
-    branch1.append( conv_3x3() )
-    branch1.append( conv_3x3() )
-    branch1.append( conv_3x3( strides=2) )
-    branch1.append( conv_3x3( strides=2) )
-    branch1.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
-    ## second branch
-    branch2 = [pooling( 4)]
-    branch2.append( conv_3x3() )
-    branch2.append( conv_3x3() )
-    branch2.append( conv_3x3() )
-    branch2.append( conv_3x3( strides=2) )
-    branch2.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
-    ## third branch
-    branch3 = [pooling( 8)]
-    branch3.append( Conv2DPeriodic( n_out, kernel_size=5) )
-    branch3.append( Conv2DPeriodic( n_out, kernel_size=5) )
-    branch3.append( conv_3x3() )
-    branch3.append( conv_3x3() )
-    branch3.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
-    ## fourth branch
-    self.module[-1].extend( [branch1, branch2, branch3])
+    ## generate layers
+    for pool in pre_pooling:
+        branch = []
+        if pool > 0:
+            branch.append( AvgPool2DPeriodic( pool))
+        for _ in range( n_conv):
+            branch.append( conv_3x3() )
+        branch.append( Conv2D( n_features//2, kernel_size=1, activation='selu' ) )
+        branch.append( post_pooling ) #either a layer or a LayerWrapper, so a layer
+        self.module[-1].append( branch )
     self.module.append( Concatenate() )
-    self.module.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
 
   def freeze( self, freeze=True):
       self.module.freeze( freeze)

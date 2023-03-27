@@ -97,14 +97,12 @@ class VolBypass( Model):
     **kwargs with default arguments:
     learning_rate:  str, default 'constant'
                     if my schedule or a constant learning rate should be used 
-    n_batches:      int, default 30
-                    how many batches to batch the data into
+    batchsize:      int, default 30
+                    how large each batch (for trainign and valid should be
     roll_images:    bool, default False
                     roll the input data, only makes sense if x_train[i] is images
     n_epochs:       int, default 20000
                     how many epochs to train the model, trains to convergence per default
-    valid_batches:  int, default 1
-                    how many batches to take for the validation set
     Returns:
     --------
     valid_loss: numpy 1d-array
@@ -114,8 +112,6 @@ class VolBypass( Model):
     learning_rate  = kwargs.pop( 'learning_rate', 'constant')
     n_epochs       = kwargs.pop( 'n_epochs', 20000)
     roll_images    = kwargs.pop( 'roll_images', False)
-    n_batches      = kwargs.pop( 'n_batches', 30)
-    valid_batches  = kwargs.pop( 'valid_batches', 1)
     stopping_delay = kwargs.pop( 'stopping_delay', 50) 
     if predictor is None:
         predictor = self.call
@@ -153,7 +149,7 @@ class VolBypass( Model):
       if roll_images and ((i+1) % roll_interval == 0 ):
           tfun.roll_images( train_data[roll_idx]  )
       ## predict the training data data
-      for batch in tfun.batch_data( n_batches, train_data ):
+      for batch in tfun.batch_data( batchsize, train_data ):
          y_batch = batch.pop(-1)
          with tf.GradientTape() as tape:
             y_pred     = predictor( *batch, training=True)
@@ -162,7 +158,7 @@ class VolBypass( Model):
          optimizer.apply_gradients( zip(gradients, trainable_variables) )
       ## predict the validation data
       if y_valid is not None:
-        y_pred = self.batched_partial_prediction( valid_batches, predictor, *valid_data )
+        y_pred = self.batched_prediction( batchsize, *valid_data, predictor=predictor )
         valid_loss.append( loss( y_valid, y_pred).numpy() ) 
         ## epoch post processing
         if valid_loss[-1] < plateau_loss:
