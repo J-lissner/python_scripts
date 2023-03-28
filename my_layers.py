@@ -58,6 +58,10 @@ class LayerWrapper(ListWrapper):
             layer.freeze( freeze) 
         elif isinstance( layer, list):
             for sublayer in layer:
+              if isinstance( sublayer, list):
+                for subsublayer in sublayer:
+                  subsublayer.trainable = not freeze
+              else:
                 sublayer.trainable = not freeze
         else:
             layer.trainable = not freeze
@@ -271,7 +275,7 @@ def upsampling_padding( pad_size, data):
 
 ### modules
 class DeepInception( Layer):
-  def __init__( self, n_features, pre_pooling=[2,4,8,10,20], post_pooling=['max'], n_conv=4, n_vol=None, *args, **kwargs):
+  def __init__( self, n_features, pre_pooling=[2,4,8,10,20], post_pooling=['max'], n_conv=3, n_vol=None, *args, **kwargs):
     """
     So the general idea is to have a reusable module with the deep inception modules
     I will start by just trying out a downsampling factor of 8 after each module
@@ -286,13 +290,15 @@ class DeepInception( Layer):
         if isinstance( post_pooling[i], str) and 'max' in post_pooling[i].lower(): 
             post_pooling[i] = GlobalMaxPool2D
         elif isinstance( post_pooling[i], str) and 'av' in post_pooling[i].lower(): 
-            post_pooling[i] = GlobalAveragePool2D
+            post_pooling[i] = GlobalAveragePooling2D
+    n_out = n_features // len( post_pooling)
     if len( post_pooling) > 1:
-        post_pooling = LayerWrapper( [ [x() for x in post_pooling], Concatenate() ] ) #invoke layers and concat
+        post_pooling = LayerWrapper( [ post_pooling[0](), post_pooling[1]()]  ) #invoke layers and concat
+        post_pooling.append( Concatenate() )
     else:
         post_pooling = post_pooling[0]() #invoke layers
     ## variable allocation
-    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_features, kernel_size=3, strides=strides)
+    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_features, kernel_size=3, strides=strides, activation='selu')
     self.module = LayerWrapper( [] )
     ## generate layers
     for pool in pre_pooling:
@@ -301,7 +307,7 @@ class DeepInception( Layer):
             branch.append( AvgPool2DPeriodic( pool))
         for _ in range( n_conv):
             branch.append( conv_3x3() )
-        branch.append( Conv2D( n_features//2, kernel_size=1, activation='selu' ) )
+        branch.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
         branch.append( post_pooling ) #either a layer or a LayerWrapper, so a layer
         self.module[-1].append( branch )
     self.module.append( Concatenate() )
