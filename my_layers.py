@@ -275,7 +275,7 @@ def upsampling_padding( pad_size, data):
 
 ### modules
 class DeepInception( Layer):
-  def __init__( self, n_features, pre_pooling=[2,4,8,10,20], post_pooling=['max'], n_conv=3, n_vol=None, *args, **kwargs):
+  def __init__( self, n_out, pooling='average', channels='constant', n_vol=None, *args, **kwargs):
     """
     So the general idea is to have a reusable module with the deep inception modules
     I will start by just trying out a downsampling factor of 8 after each module
@@ -283,34 +283,56 @@ class DeepInception( Layer):
     General layout idea is to have different downsampling factors of average pooling
     and then whatever convolution operations
     Each branch has n_features channels, with a compression to n_features//2 channels before concatenation
+    channels specifies if the channels should be linearly increased or constant within
+    one module
     """
     super().__init__( *args, **kwargs)
     ## input preprocessing
-    for i in range( len( post_pooling)):
-        if isinstance( post_pooling[i], str) and 'max' in post_pooling[i].lower(): 
-            post_pooling[i] = GlobalMaxPool2D
-        elif isinstance( post_pooling[i], str) and 'av' in post_pooling[i].lower(): 
-            post_pooling[i] = GlobalAveragePooling2D
-    n_out = n_features // len( post_pooling)
-    if len( post_pooling) > 1:
-        post_pooling = LayerWrapper( [ post_pooling[0](), post_pooling[1]()]  ) #invoke layers and concat
-        post_pooling.append( Concatenate() )
-    else:
-        post_pooling = post_pooling[0]() #invoke layers
-    ## variable allocation
-    conv_3x3 = lambda strides=1: Conv2DPeriodic( n_features, kernel_size=3, strides=strides, activation='selu')
+    if pooling in ['average', 'avg']:
+        pooling = AvgPool2DPeriodic
+    elif not isinstance( pooling, Layer):
+        pooling = MaxPool2DPeriodic
     self.module = LayerWrapper( [] )
-    ## generate layers
-    for pool in pre_pooling:
-        branch = []
-        if pool > 0:
-            branch.append( AvgPool2DPeriodic( pool))
-        for _ in range( n_conv):
-            branch.append( conv_3x3() )
-        branch.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
-        branch.append( post_pooling ) #either a layer or a LayerWrapper, so a layer
-        self.module[-1].append( branch )
+    ## increasinlgy higher coarse graining branches
+    default_conv = lambda n_out=n_out, kernel_size=3, strides=1: Conv2DPeriodic( n_out, kernel_size, strides) 
+    branch1 = []
+    if channels is 'constant':
+        n_channel = lambda i: n_out
+    else:
+        n_channel = lambda i: (i+1*n_out)//6
+    branch1.append( default_conv( n_out=n_channel(1), strides=2) )
+    branch1.append( default_conv( n_out=n_channel(2)) )
+    branch1.append( default_conv( n_out=n_channel(3), strides=2) )
+    branch1.append( default_conv( n_out=n_channel(4)) )
+    branch1.append( default_conv( n_out=n_channel(4), strides=2) )
+    branch1.append( default_conv() )
+    branch1.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    if channels is not 'constant':
+        n_channel = lambda i: (i+1*n_out)//4
+    branch2 = [pooling( 2)]
+    branch2.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
+    branch2.append( default_conv( n_out=n_channel(2)) )
+    branch2.append( default_conv( n_out=n_channel(3), kernel_size=5, strides=2) )
+    branch2.append( default_conv() )
+    branch2.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    if channels is not 'constant':
+        n_channel = lambda i: (i+1*n_out)//3
+    branch3 = [pooling( 4)]
+    branch3.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
+    branch3.append( default_conv( n_out=n_channel(2), kernel_size=5) )
+    branch3.append( default_conv( n_out=n_channel(3)) )
+    branch3.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    if channels is not 'constant':
+        n_channel = lambda i: (i+1*n_out)//2
+    branch4 = [pooling( 8)]
+    branch4.append( default_conv( n_out=n_channel(1), kernel_size=5 ) )
+    branch4.append( default_conv( n_out=n_channel(2), kernel_size=5 ) )
+    branch4.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    self.module[-1].extend( [branch1, branch2, branch3, branch4])
     self.module.append( Concatenate() )
+    self.module.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
+
+
 
   def freeze( self, freeze=True):
       self.module.freeze( freeze)

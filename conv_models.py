@@ -12,7 +12,7 @@ from my_models import Model
 
 ##################### Convolutional Neural Networks ##################### 
 class ModularInception( VolBypass): 
-  def __init__( self, n_output, n_channels=50, dense=[50,32,16,16], module_kwargs=dict(), *args, **kwargs):
+  def __init__( self, n_output, n_channels=60, dense=[50,32,16], module_kwargs=dict(), *args, **kwargs):
       """
       Build a very modal deep inception model which takes 2 (new) modular
       deep inception block in a consecutive manner and has a dense block
@@ -29,7 +29,8 @@ class ModularInception( VolBypass):
                     uses selu and batch normalization 
       """
       super().__init__( n_output, *args, **kwargs)
-      self.conv =  [DeepInception( n_channels, **module_kwargs)  ]
+      self.conv =  [DeepInception( n_channels, channels='linear', **module_kwargs), DeepInception( n_channels, pooling='max', **module_kwargs)  ]
+      self.conv.append( Flatten() )
       self.dense = LayerWrapper()
       for n_neuron in dense:
           self.dense.append( Dense( n_neuron, activation='selu') )
