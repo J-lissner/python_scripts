@@ -1,15 +1,17 @@
 import tensorflow as tf
 import numpy as np
 #from tensorflow.keras import Model 
-from my_models import Model 
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Concatenate, Layer, concatenate
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
 from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor, InceptionModule
-from fully_conv import MultilevelNet
+## classes required for inheritance and functionality
+from my_models import Model 
+from fully_conv import MultilevelNet 
+from hybrid_models import VolBypass
 
 
-class InceptionNet( Model):
+class InceptionNet( VolBypass):
     def __init__( self, n_out, channel_reduction=2, *args, **kwargs):
         """
         Build the inception net as is in the literature (szegedy2015going)
@@ -71,12 +73,12 @@ class InceptionNet( Model):
             self.side_predictors[i].append( Dropout(0.7) )
             self.side_predictors[i].append( Dense( n_out, activation=None ) )
 
-    def call( self, images, dummy_input=False, training=False):
+    def call( self, images, x=False, training=False):
         """
         Predict the images using the incepiton net. If training
         is true, the output is a list of three, with
         'prediction', 'side_1', 'side_2' 
-        dummy_input is required to catch whatever for the 
+        x contains features required for volume fraction bypass (if enabled)
         code template which uses the hybrid models
         """
         images = self.first_part( images, training=training)
@@ -85,10 +87,23 @@ class InceptionNet( Model):
         images = self.second_part( images, training=training)
         if training is True:
             side_predictions.append( self.side_predictors[1]( images, training=training) )
-        images = self.third_part( images, training=training)
-        if training is True:
-            return [images, *side_predictions] #also side predictions for loss
+        images = self.third_part( images, training=training) 
+        if self.vol_enabled:
+          base_prediction = self.predict_vol( x, training=training)
+          images += base_prediction
+          if training is True:
+            side_predictions =[ x+base_prediction for x in side_predictions] 
+        if training is True:#side predictions for gradients during training
+            return [images, *side_predictions] 
         return images #return full prediction
+
+    def freeze_main( self, freeze=True):
+        self.first_part.freeze( freeze )
+        self.second_part.freeze( freeze )
+        self.third_part.freeze( freeze )
+        for side_predictor in self.side_predictors:
+            side_predictor.freeze( freeze )
+
 
 
 

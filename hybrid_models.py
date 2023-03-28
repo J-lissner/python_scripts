@@ -8,6 +8,8 @@ from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 
+import pickle
+
 import data_processing as get
 import tf_functions as tfun
 import learner_functions as learn
@@ -36,9 +38,8 @@ class VolBypass( Model):
     self.n_output      = n_output
     self.n_vol         = n_vol
     self.vol_slice     = slice( 0, n_vol)
-    self.feature_slice = slice( min(1, n_vol), None) #everything but the volume fraction
-    self.build_vol( )
-    self.build_feature_regressor( )
+    self.build_vol()
+    self.enable_vol()
 
 
   ##### Building of the architecture subblocks ######
@@ -61,20 +62,51 @@ class VolBypass( Model):
         self.vol_part.append( Dense( n_neurons, activation=activation ) )
     self.vol_part.append( Dense( self.n_output, activation=None ) ) 
 
+  ### predictors and calls
+  def predict_vol( self, x, extra_features=[], training=False, *args, **kwargs):
+    """ take the volume fraction out of the feature vector and predict the outputs"""
+    x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
+    if isinstance( extra_features, (list,tuple)) and len(extra_features) > 0:
+        x = concatenate( [x] + extra_features  )
+    for layer in self.vol_part:
+        x = layer( x, training=training)
+    return x
 
-  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
-    """ dense model which predicts the features derived from the Conv Net """
-    self.feature_regressor = []
-    layers                 = self.feature_regressor
-    layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
-    for i in range( len( neurons)):
-        layers.append( layer( neurons[i] ) )
-        if batch_normalization:
-            layers.append( BatchNormalization() )
-    layers.append( Dense( self.n_output) )
+  def call(self, x, training=False, *args, **kwargs):
+      return self.predict_vol( x, training=training, *args, **kwargs)
 
+  ## freezer/enabler functions
+  def freeze_vol( self, freeze=True):
+    """ freeze the layers of the volume fraction linking to the output layer"""
+    for layer in self.vol_part:
+        layer.trainable = not freeze
 
-  ##### pretraining and layer freezing #####
+  def all_but_vol( self, freeze=True):
+      """ freezer function, freeze everything but the volume fraction bypass"""
+      self.freeze_all( freeze)
+      self.freeze_vol()
+  
+  def enable_vol( self, enable=True):
+      """ enable/disable to vol predictor. Only really works for inhereting models 
+      per default its enabled"""
+      self.vol_enabled = enable 
+
+  ## functions required for the saver/loader
+  def save_state( self, savepath):
+      """ Reqruired for the saver, which predictor/ internal variables it currently has"""
+      if savepath[-1] != '/':
+          savepath = savepath + '/'
+      save_kwargs = dict( enable_vol=self.vol_enabled )
+      pickle.dump( save_kwargs, open( savepath + 'model_state.pkl', 'wb' ) )
+
+  def recover_state( self, load_path):
+      """ get the state of the internal variables and apply it as the model was dumped """
+      if load_path[-1] != '/':
+          load_path = load_path + '/'
+      load_kwargs = pickle.load( open( load_path + 'model_state.pkl', 'rb' ) )
+      self.enable_vol( load_kwargs['enable_vol'] )
+
+  ##### pretraining #####
   def pretrain_section( self, train_data, valid_data=None,  predictor=None, **kwargs ):
     """
     NOTE: before calling this function the model has to be called that
@@ -97,11 +129,11 @@ class VolBypass( Model):
     **kwargs with default arguments:
     learning_rate:  str, default 'constant'
                     if my schedule or a constant learning rate should be used 
-    batchsize:      int, default 30
+    batchsize:      int, default 25
                     how large each batch (for trainign and valid should be
     roll_images:    bool, default False
                     roll the input data, only makes sense if x_train[i] is images
-    n_epochs:       int, default 20000
+    n_epochs:       int, default 5000
                     how many epochs to train the model, trains to convergence per default
     Returns:
     --------
@@ -110,8 +142,9 @@ class VolBypass( Model):
     """
     ## input preprocessing and default kwargs
     learning_rate  = kwargs.pop( 'learning_rate', 'constant')
-    n_epochs       = kwargs.pop( 'n_epochs', 20000)
+    n_epochs       = kwargs.pop( 'n_epochs', 5000)
     roll_images    = kwargs.pop( 'roll_images', False)
+    batchsize    = kwargs.pop( 'batchsize', 25)
     stopping_delay = kwargs.pop( 'stopping_delay', 50) 
     if predictor is None:
         predictor = self.call
@@ -184,34 +217,40 @@ class VolBypass( Model):
     return valid_loss
 
 
+class FeaturePredictor( VolBypass):
+  def __init__( self, n_output, n_vol=1, *args, **kwargs):
+    """
+    build the default model and set internal variables. Default model can
+    be overwritten by calling the 'build_*'method
+    Parameters:
+    -----------
+    n_output:       int,
+                    number of target values
+    n_vol:          int, default 1
+                    number of features taken for the vol bypass
+    """
+    super().__init__(n_output, *args, **kwargs) 
+    self.feature_slice = slice( min(1, n_vol), None) #everything but the volume fraction
+    self.build_feature_regressor( )
+
+
+  def build_feature_regressor( self, neurons=[45,32,25], activation='selu', batch_normalization=True ):
+    """ dense model which predicts the features derived from the Conv Net """
+    self.feature_regressor = []
+    layers                 = self.feature_regressor
+    layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
+    for i in range( len( neurons)):
+        layers.append( layer( neurons[i] ) )
+        if batch_normalization:
+            layers.append( BatchNormalization() )
+    layers.append( Dense( self.n_output) )
+
   def freeze_feature_predictor( self, freeze=True):
     """ freeze or unfreeze the feature predictor """
     try:
       for layer in self.feature_regressor:
         layer.trainable = not freeze
     except: pass
-
-  def all_but_vol( self, freeze=True):
-      """ freeze everything but the volume fraction bypass"""
-      self.freeze_all( freeze)
-      self.freeze_vol()
-
-  def freeze_vol( self, freeze=True):
-    """ freeze the layers of the volume fraction linking to the output layer"""
-    for layer in self.vol_part:
-        layer.trainable = not freeze
-  
-
-
-  ### predictors and calls
-  def predict_vol( self, x, extra_features=[], training=False, *args, **kwargs):
-    """ take the volume fraction out of the feature vector and predict the outputs"""
-    x = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) ) 
-    if isinstance( extra_features, (list,tuple)) and len(extra_features) > 0:
-        x = concatenate( [x] + extra_features  )
-    for layer in self.vol_part:
-        x = layer( x, training=training)
-    return x
 
 
   def predict_features( self, x, training=False):
@@ -220,7 +259,6 @@ class VolBypass( Model):
     for layer in self.feature_regressor:
         x = layer( x, training=training)
     return x
-
 
   def call(self, x, training=False, *args, **kwargs):
     """ call function given a feature vector which has the volume
@@ -232,8 +270,7 @@ class VolBypass( Model):
     return x_fts + x_vol
 
 
-
-class DualInception( VolBypass):
+class DualInception( FeaturePredictor):
   """
   train a model that is linking the volume fraction directly to the
   output layer and taking the images to train a ConvNet branch
