@@ -31,19 +31,20 @@ class SidePredictor( Layer):
     #conv1x1 = lambda n: Conv2D( n, kernel_size=1, activation='selu' )
     inception_slim    = LayerWrapper()
     inception_slim.append( Conv2D( 1, kernel_size=1, activation=None)  ) #default stride is 1
-    inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
-    inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=5, activation='selu') )
+    inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    inception_slim.append( Conv2DPeriodic( n_channels, kernel_size=5) )
     self.direct_upsampler = UpSampling2D()
     self.cg_processor = LayerWrapper()
     self.cg_processor.append( inception_slim) #list inside list -> inception module
     self.cg_processor.append( Concatenate() )
-    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
-    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
+    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.cg_processor.append( Conv2DPeriodic( n_channels, kernel_size=1, activation='selu') )
     #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
-    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
-    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
-    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+    self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=1, activation='selu') )
     resnet_predictor = LayerWrapper( Conv2D( n_channels, kernel_size=1, activation='selu') )
     resnet_predictor.append( [Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' )] )
     resnet_predictor[-1].append( Conv2DPeriodic( n_channels, kernel_size=3, strides=1, activation='selu' ) )
@@ -139,13 +140,14 @@ class Predictor( Layer):
     super().__init__( *args, **kwargs)
     self.predictor = LayerWrapper()
     for i in range( 2): #now with two resnet modules at last level
-        branch1 = Conv2D( 2*n_out, kernel_size=1, activation='selu')
+        branch1 = Conv2D( 2*n_out, kernel_size=1)
         branch2 = [Conv2DPeriodic( 2*n_out, kernel_size=3), Conv2DPeriodic( 2*n_out, kernel_size=3) ]
         generic_resnet = LayerWrapper()
         generic_resnet.append( branch1 )
         generic_resnet.append( branch2 )
         self.predictor.append( generic_resnet)
         self.predictor.append( Add() )
+        self.predictor.append( ( 2*n_out, kernel_size=1, activation='selu') )
     self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
     self.direct_upsampler = UpSampling2D() #only required for specific model type
   
