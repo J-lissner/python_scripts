@@ -147,7 +147,7 @@ class Predictor( Layer):
         generic_resnet.append( branch2 )
         self.predictor.append( generic_resnet)
         self.predictor.append( Add() )
-        self.predictor.append( ( 2*n_out, kernel_size=1, activation='selu') )
+        self.predictor.append( Conv2D( 2*n_out, kernel_size=1, activation='selu') )
     self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
     self.direct_upsampler = UpSampling2D() #only required for specific model type
   
