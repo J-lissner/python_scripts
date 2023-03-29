@@ -248,9 +248,11 @@ class MultilevelNet( ABC):
           if learn.is_slashable( learning_rate ) and not learning_rate.allow_stopping:
             learning_rate.slash()
             overfit = 0
-            plateau_loss = plateau_loss/plateau_threshold
-            plateau_threshold = 0.97 if learning_rate.allow_stopping else plateau_threshold
-            plateau_loss = plateau_loss*plateau_threshold
+            if learning_rate.allow_stopping: #simply have very few iterations afterwards
+                plateau_loss = plateau_loss/plateau_threshold
+                plateau_threshold = 0.98 
+                plateau_loss = plateau_loss*plateau_threshold
+                stopping_delay = 5 # there won't be alot happening anyways
             continue
           break
     toc( f'trained level {level}')
