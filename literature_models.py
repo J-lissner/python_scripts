@@ -4,11 +4,58 @@ import numpy as np
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Concatenate, Layer, concatenate
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
-from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor, InceptionModule
+from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor #multilevel
+from literature_layers import ResBlock, ResxBlock, InceptionModule #constant resolution
 ## classes required for inheritance and functionality
 from my_models import Model 
 from fully_conv import MultilevelNet 
 from hybrid_models import VolBypass
+
+
+class ResNet( VolBypass):
+    def __init__( self, n_out, resx=False, sne=False, *args, **kwargs):
+        """
+        Build the resnet50 as it is in the literature,
+        can also build the resXnet50, simply by setting the resx to true
+        Parameters:
+        -----------
+        n_out:      int, 
+                    number of variables to predict
+        resx:       bool, default False
+                    if it should use the 'cardinality' resXnet model
+        sne:        bool, default False
+                    if the squeeze and excite block should be added 
+                    inside the res(x) block
+        """
+        kwargs.pop( 'n_vol', 1) #catch default argument
+        super().__init__( n_out, *args, **kwargs )
+        layer = ResBlock if resx is False else ResxBlock
+        ## hardwired parameters from literature
+        n_channels = [ 3*[256], 4*[512], 6*[1024], 3*[2048] ]
+        n_blocks = len( n_channels)
+        self.architecture = LayerWrapper()
+        self.architecture.append( Conv2DPeriodic( 64, kernel_size=7, strides=2 ) )
+        self.architecture.append( BatchNormalization() )
+        self.architecture.append( tf.keras.layers.Activation( 'relu' )  )
+        self.architecture.append( MaxPool2DPeriodic( 3, strides=2 ) )
+        for i in range( n_blocks):
+            for j in range( len( n_channels[i]) ):
+                if i != 0 and j == 0:
+                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne) )
+                elif i == 0 and j == 0:
+                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne, blowup=True) )
+                else:
+                    self.architecture.append( layer( n_channels[i][j], sne=sne) )
+        self.architecture.append( GlobalAveragePooling2D() )
+        self.architecture.append( Dense( n_out) )
+
+    def call( self, images, x=False, training=False):
+        images = self.architecture( images, training=training) 
+        if self.vol_enabled:
+          base_prediction = self.predict_vol( x, training=training)
+          images += base_prediction
+        return images #return full prediction
+
 
 
 class InceptionNet( VolBypass):

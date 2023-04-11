@@ -4,7 +4,8 @@ from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Layer
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D, Concatenate
 from tensorflow_addons.layers import InstanceNormalization
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
+from my_layers import SqueezeExcite, LayerWrapper
 
 
 def Relu( x, training=None, **kwargs):
@@ -99,6 +100,84 @@ class MsPredictor( Layer):
 
 
 
+
+class ResBlock( Layer):
+    """
+    Block of the deep residual network directly taken from the literature
+    CARE: this is the implementation of the bottleneck layer,
+    (with one less 3x3 conv but 1x1 pre-post conv for dimensionality reduction)
+    not the residual block with 2 3x3 conv
+    """
+    def __init__( self, n_out, strides=1, sne=False, blowup=False, *args, **kwargs):
+        """
+        Parameters:
+        -----------
+        n_out:          int,
+                        number of output channels, divides by 4 for intermediate operations
+        strides:        int, default 1
+                        if stride> 1, then the bypass is done via 1x1 conv (no activation function)
+        sne:            bool, default False
+                        whether the squeeze adn excitation block should be added after convolution
+        blowup:         bool, default False
+                        whether to expand the number of channels via 1x1 conovolution (required
+                        for first res block)
+        """
+        super().__init__( *args, **kwargs)
+        n_channels = n_out //4
+        self.block = LayerWrapper()
+        self.block.append( Conv2D( n_channels, kernel_size=1, strides=strides ) )
+        self.block.append( BatchNormalization( ) )
+        self.block.append( tf.keras.layers.Activation( 'relu' ) )
+        self.block.append( Conv2DPeriodic( n_channels, kernel_size=3) )
+        self.block.append( BatchNormalization( ) )
+        self.block.append( tf.keras.layers.Activation( 'relu' ) )
+        self.block.append( Conv2D( n_out, kernel_size=1) )
+        self.block.append( BatchNormalization( ) )
+        if sne:
+            self.block.append( SqueezeExcite( n_out) )
+        ### bypass etc.
+        if strides > 1 or blowup:
+            self.bypass = Conv2D( n_out, kernel_size=1, strides=strides )
+        else: # identity mapping
+            self.bypass = lambda x, *args, **kwargs: x
+        self.relu = tf.keras.layers.Activation( 'relu' ) 
+
+
+    def __call__( self, images, *args, training=False, **kwargs):
+        images = self.block( images, training=training) + self.bypass( images, training=training)
+        return self.relu( images)
+
+
+class ResxBlock( ResBlock):
+    """
+    implements the bottleneck resXblock of the resXnet. has more channels
+    and more 3x3 operations than the resblock.
+    """
+    def __init__( self, n_out, strides=1, cardinality=32, sne=False, blowup=False, *args, **kwargs):
+        """
+        see above, inherited from ResBlock, pracitcally the same
+        """
+        super().__init__( *args, **kwargs)
+        self.block = LayerWrapper( [] )
+        n_channels = n_out // 2 
+        n_branch = n_channels // cardinality
+        for i in range( cardinality):
+            resx_block = []
+            resx_block.append( Conv2D( n_branch, kernel_size=1, strides=strides) )
+            resx_block.append( BatchNormalization() )
+            resx_block.append( tf.keras.layers.Activation( 'relu' ) )
+            resx_block.append( Conv2DPeriodic( n_branch, kernel_size=3) )
+            resx_block.append( BatchNormalization() )
+            self.block[-1].append( resx_block )
+        self.block.append( Concatenate() ) 
+        self.block.append( Conv2D( n_out, kernel_size=1 )  )
+        self.block.append( BatchNormalization() ) 
+        if sne:
+            self.block.append( SqueezeExcite( n_out) )
+        #bypass n relu inherited
+
+
+        
 
 
 
