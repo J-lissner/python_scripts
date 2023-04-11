@@ -1,3 +1,4 @@
+import tensorflow as tf
 from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
 from tensorflow.keras.layers import Conv2DTranspose, Layer
 from tensorflow.keras.layers import GlobalAveragePooling2D, GlobalMaxPool2D
@@ -295,42 +296,49 @@ class DeepInception( Layer):
     self.module = LayerWrapper( [] )
     ## increasinlgy higher coarse graining branches
     default_conv = lambda n_out=n_out, kernel_size=3, strides=1: Conv2DPeriodic( n_out, kernel_size, strides) 
+    conv_1x1 = lambda n_out=n_out: Conv2D( n_out, kernel_size=1, activation='selu' )
     branch1 = []
     if channels is 'constant':
         n_channel = lambda i: n_out
     else:
-        n_channel = lambda i: (i+1*n_out)//6
+        n_channel = lambda i: (i*n_out)//6
     branch1.append( default_conv( n_out=n_channel(1), strides=2) )
     branch1.append( default_conv( n_out=n_channel(2)) )
+    branch1.append( conv_1x1( n_out=n_channel(2)) )
     branch1.append( default_conv( n_out=n_channel(3), strides=2) )
     branch1.append( default_conv( n_out=n_channel(4)) )
-    branch1.append( default_conv( n_out=n_channel(4), strides=2) )
-    branch1.append( default_conv() )
-    branch1.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch1.append( conv_1x1( n_out=n_channel(4)) )
+    branch1.append( default_conv( n_out=n_channel(5), strides=2) )
+    #branch1.append( default_conv()) 
+    branch1.append( SqueezeExcite( n_out, default_conv()) )
     if channels is not 'constant':
-        n_channel = lambda i: (i+1*n_out)//4
+        n_channel = lambda i: (i*n_out)//4
     branch2 = [pooling( 2)]
     branch2.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
     branch2.append( default_conv( n_out=n_channel(2)) )
+    branch2.append( conv_1x1( n_out=n_channel(2)) )
     branch2.append( default_conv( n_out=n_channel(3), kernel_size=5, strides=2) )
-    branch2.append( default_conv() )
-    branch2.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    #branch2.append( default_conv() ) 
+    branch2.append( SqueezeExcite( n_out, default_conv() ) )
     if channels is not 'constant':
-        n_channel = lambda i: (i+1*n_out)//3
+        n_channel = lambda i: (i*n_out)//3
     branch3 = [pooling( 4)]
     branch3.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
     branch3.append( default_conv( n_out=n_channel(2), kernel_size=5) )
-    branch3.append( default_conv( n_out=n_channel(3)) )
-    branch3.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch3.append( conv_1x1( n_out=n_channel(2) ) )
+    #branch3.append( default_conv( n_out=n_channel(3)) ) 
+    branch3.append( SqueezeExcite( n_channel(3), default_conv( n_out=n_channel(3)) ) )
     if channels is not 'constant':
-        n_channel = lambda i: (i+1*n_out)//2
+        n_channel = lambda i: (i*n_out)//3
     branch4 = [pooling( 8)]
     branch4.append( default_conv( n_out=n_channel(1), kernel_size=5 ) )
     branch4.append( default_conv( n_out=n_channel(2), kernel_size=5 ) )
-    branch4.append( Conv2D( n_out//2, kernel_size=1, activation='selu' ) )
+    branch4.append( conv_1x1( n_out=n_channel(2) ) )
+    #branch4.append( default_conv( n_out=n_channel(3), kernel_size=5 )  ) 
+    branch4.append( SqueezeExcite( n_channel(3), default_conv( n_out=n_channel(3), kernel_size=5 )  ) )
     self.module[-1].extend( [branch1, branch2, branch3, branch4])
     self.module.append( Concatenate() )
-    self.module.append( Conv2D( n_out, kernel_size=1, activation='selu' ) )
+    self.module.append( SqueezeExcite( n_out, Conv2D( n_out, kernel_size=1, activation='selu' )) )
 
 
 
@@ -342,6 +350,77 @@ class DeepInception( Layer):
       args to catch the modality of the code for the hybrid models
       """
       return self.module( images, training=training)
+
+class SqueezeExcite(Layer):
+    """
+    get the Squeeze and excitation block for any layer, or callable. Only
+    works in the 2D convolutional neural netowrk context (since globalPool2D
+    is used)
+    It is basically a reweighting of channels using the global information, as
+    well as each channel for information input. The main difference to 1x1 conv 
+    is that it returns channel wise weights from 0-1 (sigmoid), instead of a
+    sum of all channels in each channel. So it weights each individual output
+    channel instead of weighting each individual input channel over all output channels
+    This has added functionality to the literature squeeze and excitation 
+    module, namely there can be a layer in parralel to the squeeze and excitation
+    sidepass
+    """
+    def __init__( self, n_channels, layer=None, reduction_ratio=16, *args, **kwargs):
+        """
+        Implement the defaut squeeze and excitation network
+        Parameters:
+        -----------
+        n_channels:       int or list of ints
+                        [input, (output) ] n_channels of the layer, if an 
+                        int it assumes that input == output
+        layer:          tensorflow.keras.layer or callable
+                        callable which to squeeze and excite
+        reduction_rate: int, default 16
+                        reduction rate of the channels 
+        """
+        ## input processing
+        super().__init__( *args, **kwargs)
+        n_channels = 2*[n_channels] if isinstance( n_channels,int) else n_channels
+        layer = (lambda x, *args, **kwargs: x)  if layer is None else layer
+        self.se_block = LayerWrapper()
+        self.se_block.append( GlobalAveragePooling2D() )
+        self.se_block.append( Dense( n_channels[0]//reduction_ratio, activation='selu') )
+        self.se_block.append( Dense( n_channels[1], activation='sigmoid' ))
+        self.layer = layer
+
+    def __call__( self, images, *channel_args, training=False, **channel_kwargs):
+        weights = self.se_block( images, training=training)
+        weights = tf.reshape( weights, [weights.shape[0], 1,1, weights.shape[-1] ] )
+        return weights * self.layer( images, *channel_args, training=False, **channel_kwargs) 
+
+    def freeze( self, freeze=False):
+        self.se_block.freeze( freeze)
+        try: 
+            self.layer.freeze( freeze) #layerwrapper
+        except:
+            self.layer.trainable = not freeze
+
+
+class NormalizationLayer( SqueezeExcite):
+    """
+    basically the same as the Squeeze and Excite block above, but there is a
+    default 1x1 conv at the same time to the SnE bypass
+    """
+    def __init__( self, n_channels, reduction_ratio=16, *args, **kwargs):
+        """
+        Implement the defaut squeeze and excitation network
+        Parameters:
+        -----------
+        n_channels:       int or list of ints
+                        [input, (output) ] n_channels of the layer, if an 
+                        int it assumes that input == output
+        reduction_rate: int, default 16
+                        reduction rate of the channels 
+        """
+        n_channels = 2*[n_channels] if isinstance( n_channels,int) else n_channels
+        bypass_layer = Conv2D( n_channels[1], kernel_size=1, activation='selu' )
+        super().__init__( n_channels, layer=bypass_layer, reduction_ratio=reduction_ratio, *args, **kwargs)
+
 
 
 class InceptionModule():
