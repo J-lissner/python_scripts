@@ -214,6 +214,8 @@ class RemoteLR(LRSchedules):
         self.model_parameters = []
         self.first_slash      = 1/99 #any float value to false the ==
         self.slash_decay = slash_decay #whether or not to slash the weight decay
+        self.slash_epoch = []
+        self.step = 0
 
 
     def slash( self, remote_call=True):
@@ -221,6 +223,7 @@ class RemoteLR(LRSchedules):
         Adjust the learning rate, only allow for an interference from
         a remote call when not increasing the leranrate
         """
+        self.slash_epoch.append( self.step)
         ## if we are at the first phase of constant lr
         if self.phase == 0:
             self.phase += 1
@@ -260,6 +263,7 @@ class RemoteLR(LRSchedules):
         Return the current learnrate. Also estimates the max LR in the first few steps
         """
         ## estimate the maximum learning rate
+        self.step += 1
         if self.max_lr is None and self.model is not None:
             self.estimate_max_lr()
         ### internally adjust the learning rate when increasing it
