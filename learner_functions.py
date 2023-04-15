@@ -174,20 +174,20 @@ class RemoteLR(LRSchedules):
     first it will be constant until plateau, then there will be 1 up jumps
     with a fixed amount of steps and thereafter downsteps whenever it 
     plateaus"""
-    def __init__( self, n_steps=50, base_lr=1e-3, jump=5, n_up=1, n_down=3, slash_decay=3 ):
+    def __init__( self, base_lr=1e-3, n_steps=50, jump=5, n_up=1, n_down=3, slash_decay=3 ):
         """
         Note that the results were pretty dependent on the weight decay
         from adamW, it performed significantly more reliable for a decay
         of 1e-4
         Parameters:
         -----------
-        n_steps:        int, default 50
-                        how many steps the learnrate should be forced
-                        constant when we are upscaling the learnrate
         base_lr:        float, default 1e-3
                         learnrate to start out with, max elligible leranrate will
                         be estimated during runtime, and base_lr adjusted to 
                         max( base_lr, max_lr/jump )
+        n_steps:        int, default 50
+                        how many steps the learnrate should be forced
+                        constant when we are upscaling the learnrate
         n_up:           int, default 0
                         How many times the learning rate should jump up, 
                         If the number is larger than 1 it will exceed 'max_lr'
