@@ -220,26 +220,25 @@ def pad_periodic( kernel_size, data):
                     the padded data by the minimum required width
     """
     ## for now i assume that on even sized kernels the result is in the top left
+    image_dim = data.ndim - 2 #n_smaples, n_channels
     if isinstance( kernel_size, int):
-        pad_l = kernel_size//2 #left
-        pad_u = kernel_size//2 #up
-        pad_r = pad_l - 1 if (kernel_size %2) == 0 else pad_l #right
-        pad_b = pad_u - 1 if (kernel_size %2) == 0 else pad_u #bot
-    else: 
-        pad_l = (kernel_size[1] )//2  #left
-        pad_u = (kernel_size[0] )//2 #bot
-        pad_r = pad_l - 1 if (kernel_size[1] %2) == 0 else pad_l #right
-        pad_b = pad_u - 1 if (kernel_size[0] %2) == 0 else pad_u #bot
-    ## the subscript refer to where it is sliced off, i.e. placedo n the opposite side
-    if pad_r == 0:
-        top_pad = []
-    else:
-        top_pad = [concatenate( [data[:,-pad_r:, -pad_u:], data[:,-pad_r:,:], data[:,-pad_r:, :pad_b] ], axis=2 ) ]
-    bot_pad = [concatenate( [data[:,:pad_l, -pad_u:], data[:,:pad_l,:], data[:,:pad_l, :pad_b] ], axis=2 ) ]
-    data = concatenate( [data[:,:,-pad_u:], data, data[:,:,:pad_b] ], axis=2 )
-    data = concatenate( top_pad + [data] + bot_pad, axis=1 )
+        kernel_size = image_dim*[kernel_size]
+    for i in range( image_dim):
+        left_pad =  kernel_size[i]//2 #start of axis
+        right_pad = left_pad - 1 if (kernel_size[i] %2) == 0 else left_pad #end of axis
+        ## left and right refers to where its 'stitched on', i.e. slices from the opposite side
+        if right_pad == 0:
+            end_pad = []
+        else:
+            end_slice = (i+2)*[slice(None)]
+            end_slice[i+1] = slice( right_pad)
+            end_slice = tuple( end_slice)
+            end_pad = [data[end_slice]]
+        start_slice = (i+2)*[slice(None)]
+        start_slice[i+1] = slice( -left_pad, data.shape[i+1])
+        start_slice = tuple( start_slice)
+        data = concatenate( [data[start_slice], data ] + end_pad, axis=i+1 )
     return data
-
 
 def upsampling_padding( pad_size, data):
     """
@@ -273,10 +272,9 @@ def upsampling_padding( pad_size, data):
     data = concatenate( top_pad + [data] + bot_pad, axis=1 )
     return data
 
-
 ### modules
 class DeepInception( Layer):
-  def __init__( self, n_out, pooling='average', channels='constant', n_vol=None, *args, **kwargs):
+  def __init__( self, n_channels=64, pooling='average', *args, **kwargs):
     """
     So the general idea is to have a reusable module with the deep inception modules
     I will start by just trying out a downsampling factor of 8 after each module
@@ -286,70 +284,104 @@ class DeepInception( Layer):
     Each branch has n_features channels, with a compression to n_features//2 channels before concatenation
     channels specifies if the channels should be linearly increased or constant within
     one module
+    Parameters:
+    -----------
+    n_channels:     list of (up to 3) ints, default 64
+                    number of channels defined for convolution, linearly interpolates 
+                    as the number of channels in each branch for the first two ints
+                    in the list. The last integer defines the number of output channels
+                    after concatenation and 1x1 conv (list of len 2 is also allowed) 
+    pooling:        str, default 'average'
+                    pre-pooling method in each branch, choose between 'average' and 'max'
     """
     super().__init__( *args, **kwargs)
     ## input preprocessing
+    n_out = [n_channels] if not hasattr( n_channels, '__iter__') else list( n_channels)
+    n_out = 2*n_out if len( n_out) == 1 else n_out
     if pooling in ['average', 'avg']:
         pooling = AvgPool2DPeriodic
     elif not isinstance( pooling, Layer):
         pooling = MaxPool2DPeriodic
-    self.module = LayerWrapper( [] )
+    ## function definition and abbreviations
+    default_conv = lambda n_out=n_out[1], kernel_size=3, strides=1: Conv2DPeriodic( n_out, kernel_size, strides) 
+    conv_1x1     = lambda n_out=n_out[1]: Conv2D( n_out, kernel_size=1, activation='selu' )
+    n_channels   = lambda i, n_conv: n_out[0] + i/n_conv * (n_out[1] - n_out[0] )
+    branch_initialization = lambda n: [ LayerWrapper() for _ in range( n)]
+    ## hardwired parameters of the deep inception module
+    self.n_branches = 4 
+    self.branches = branch_initialization( n_branches)
+    self.normalizers = branch_initialization( n_branches) # basically the same as branches
+    self.concatenator = LayerWrapper( Concatenate)
+    self.concatenator.append( SqueezeExcite( n_out[-1], Conv2D( n_out[-1], kernel_size=1, activation='selu' )) )
     ## increasinlgy higher coarse graining branches
-    default_conv = lambda n_out=n_out, kernel_size=3, strides=1: Conv2DPeriodic( n_out, kernel_size, strides) 
-    conv_1x1 = lambda n_out=n_out: Conv2D( n_out, kernel_size=1, activation='selu' )
-    branch1 = []
-    if channels is 'constant':
-        n_channel = lambda i: n_out
-    else:
-        n_channel = lambda i: (i*n_out)//6
-    branch1.append( default_conv( n_out=n_channel(1), strides=2) )
-    branch1.append( default_conv( n_out=n_channel(2)) )
-    branch1.append( conv_1x1( n_out=n_channel(2)) )
-    branch1.append( default_conv( n_out=n_channel(3), strides=2) )
-    branch1.append( default_conv( n_out=n_channel(4)) )
-    branch1.append( conv_1x1( n_out=n_channel(4)) )
-    branch1.append( default_conv( n_out=n_channel(5), strides=2) )
-    #branch1.append( default_conv()) 
-    branch1.append( SqueezeExcite( n_out, default_conv()) )
-    if channels is not 'constant':
-        n_channel = lambda i: (i*n_out)//4
-    branch2 = [pooling( 2)]
-    branch2.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
-    branch2.append( default_conv( n_out=n_channel(2)) )
-    branch2.append( conv_1x1( n_out=n_channel(2)) )
-    branch2.append( default_conv( n_out=n_channel(3), kernel_size=5, strides=2) )
-    #branch2.append( default_conv() ) 
-    branch2.append( SqueezeExcite( n_out, default_conv() ) )
-    if channels is not 'constant':
-        n_channel = lambda i: (i*n_out)//3
-    branch3 = [pooling( 4)]
-    branch3.append( default_conv( n_out=n_channel(1), kernel_size=5, strides=2) )
-    branch3.append( default_conv( n_out=n_channel(2), kernel_size=5) )
-    branch3.append( conv_1x1( n_out=n_channel(2) ) )
-    #branch3.append( default_conv( n_out=n_channel(3)) ) 
-    branch3.append( SqueezeExcite( n_channel(3), default_conv( n_out=n_channel(3)) ) )
-    if channels is not 'constant':
-        n_channel = lambda i: (i*n_out)//3
-    branch4 = [pooling( 8)]
-    branch4.append( default_conv( n_out=n_channel(1), kernel_size=5 ) )
-    branch4.append( default_conv( n_out=n_channel(2), kernel_size=5 ) )
-    branch4.append( conv_1x1( n_out=n_channel(2) ) )
-    #branch4.append( default_conv( n_out=n_channel(3), kernel_size=5 )  ) 
-    branch4.append( SqueezeExcite( n_channel(3), default_conv( n_out=n_channel(3), kernel_size=5 )  ) )
-    self.module[-1].extend( [branch1, branch2, branch3, branch4])
-    self.module.append( Concatenate() )
-    self.module.append( SqueezeExcite( n_out, Conv2D( n_out, kernel_size=1, activation='selu' )) )
-
+    # 6 conv, 3 1x1; first branch
+    n_op = 6 #number of actual convolution operations
+    branch = self.branches[0]
+    branch.append( default_conv(  n_out=n_channels(1, n_op), strides=2) )
+    branch.append( default_conv(  n_out=n_channels(2, n_op)) )
+    branch.append( conv_1x1(      n_out=n_channels(2, n_op)) )
+    branch.append( default_conv(  n_out=n_channels(3, n_op), strides=2) )
+    branch.append( default_conv(  n_out=n_channels(4, n_op)) )
+    branch.append( conv_1x1(      n_out=n_channels(4, n_op)) )
+    branch.append( default_conv(  n_out=n_channels(5, n_op), strides=2) )
+    self.normalizers[0].append( SqueezeExcite( n_channels(6, n_op), default_conv( n_out=n_channels(6, n_op))) )
+    #pool+ 1 1x1 + 4 conv operations; second branch
+    n_op = 4
+    branch = self.branches[1]
+    branch.append( pooling( 2) ) 
+    branch.append( default_conv(  n_out=n_channels(1, n_op), kernel_size=5, strides=2) )
+    branch.append( default_conv(  n_out=n_channels(2, n_op)) )
+    branch.append( conv_1x1(      n_out=n_channels(2, n_op)) )
+    branch.append( default_conv(  n_out=n_channels(3, n_op), kernel_size=5, strides=2) )
+    self.normalizers[1].append( SqueezeExcite( n_channels(4, n_op), default_conv( n_out=n_channels(4, n_op)) ) )
+    #pool + 1 1x1 + 3conv
+    n_op =  3
+    branch = self.branches[2]
+    branch.append( pooling( 4) )
+    branch.append( default_conv(  n_out=n_channels(1, n_op), kernel_size=5, strides=2) )
+    branch.append( default_conv(  n_out=n_channels(2, n_op), kernel_size=5) )
+    branch.append( conv_1x1(      n_out=n_channels(2, n_op) ) )
+    self.normalizers[2].append( SqueezeExcite( n_channels(3, n_op), default_conv( n_out=n_channels(3, n_op)) ) )
+    #pool + 1 1x1 + 3 conv
+    n_op = 3
+    branch = self.branches[3]
+    branch.append( pooling( 8) )
+    branch.append( default_conv(  n_out=n_channels(1, n_op), kernel_size=5 ) )
+    branch.append( default_conv(  n_out=n_channels(2, n_op), kernel_size=5 ) )
+    branch.append( conv_1x1(      n_out=n_channels(2, n_op) ) )
+    self.normalizers[3].append( SqueezeExcite( n_channels(3, n_op), default_conv( n_out=n_channels(3, n_op), kernel_size=5 )  ) )
 
 
   def freeze( self, freeze=True):
-      self.module.freeze( freeze)
+      for i in range( self.n_branches):
+          self.branches[i].freeze( freeze)
+          self.normalizers[i].freeze( freeze)
+      self.concatenator.freeze( freeze)
 
-  def __call__( self, images, training=False):
+  def __call__( self, images, x_extra=None, training=False):
       """
-      args to catch the modality of the code for the hybrid models
+      Predict the deep inception module. May also take an extra feature
+      vector which will be (i think) added to the squeeze and excitation bypass
+      Parameters:
+      -----------
+      images:       tensorflow.tensor of shape [n, *res, n_channels]
+                    input data to the module
+      x_extra:      tensorflow.tensor of shape [n, n_fts]
+                    feature vector to be added to the SnE block
+      training:     bool, default False
+                    flag to inform the ANN whether its training
+      Returns:
+      --------
+      images:       tensorflow.tensor of shape [n, *res, n_channels]
+                    output of the module, downsampled by factor 8
       """
-      return self.module( images, training=training)
+      prediction = []
+      for i in range( self.n_branches ):
+          prediction.append( self.branches[i]( images, training=training ) )
+          prediction[-1] = self.normalizers[i]( prediction[-1], x_extra=x_extra, training=training)
+      return self.concatenator( prediction, x_extra=x_extra, training=training )
+
+
 
 class SqueezeExcite(Layer):
     """
@@ -370,8 +402,8 @@ class SqueezeExcite(Layer):
         Implement the defaut squeeze and excitation network
         Parameters:
         -----------
-        n_channels:       int or list of ints
-                        [input, (output) ] n_channels of the layer, if an 
+        n_channels:     int or list of ints
+                        [(input), output ] n_channels of the layer, if an 
                         int it assumes that input == output
         layer:          tensorflow.keras.layer or callable
                         callable which to squeeze and excite
@@ -380,18 +412,22 @@ class SqueezeExcite(Layer):
         """
         ## input processing
         super().__init__( *args, **kwargs)
-        n_channels = 2*[n_channels] if isinstance( n_channels,int) else n_channels
+        n_channels = [n_channels] if not hasattr( n_channels, '__iter__') else list( n_channels)
+        n_channels = 2*n_channels if len( n_channels) == 1 else n_channels
         layer = (lambda x, *args, **kwargs: x)  if layer is None else layer
+        self.pooling = GlobalAveragePooling2D()
         self.se_block = LayerWrapper()
-        self.se_block.append( GlobalAveragePooling2D() )
         self.se_block.append( Dense( n_channels[0]//reduction_ratio, activation='selu') )
         self.se_block.append( Dense( n_channels[1], activation='sigmoid' ))
         self.layer = layer
 
-    def __call__( self, images, *channel_args, training=False, **channel_kwargs):
-        weights = self.se_block( images, training=training)
+    def __call__( self, images, *channel_args, x_extra=None, training=False, **channel_kwargs):
+        weights = self.pooling( images)
+        if x_extra is not None:
+            weights = concatenate( [weights, x_extra] )
+        weights = self.se_block( weights, training=training)
         weights = tf.reshape( weights, [weights.shape[0], 1,1, weights.shape[-1] ] )
-        return weights * self.layer( images, *channel_args, training=False, **channel_kwargs) 
+        return weights * self.layer( images, *channel_args, training=training, **channel_kwargs) 
 
     def freeze( self, freeze=False):
         self.se_block.freeze( freeze)
@@ -408,14 +444,9 @@ class NormalizationLayer( SqueezeExcite):
     """
     def __init__( self, n_channels, reduction_ratio=16, *args, **kwargs):
         """
-        Implement the defaut squeeze and excitation network
+        Implement the squeeze and excitation block with parallel 1x1 conv
         Parameters:
-        -----------
-        n_channels:       int or list of ints
-                        [input, (output) ] n_channels of the layer, if an 
-                        int it assumes that input == output
-        reduction_rate: int, default 16
-                        reduction rate of the channels 
+        see SqueezeExcite.__init__ 
         """
         n_channels = 2*[n_channels] if isinstance( n_channels,int) else n_channels
         bypass_layer = Conv2D( n_channels[1], kernel_size=1, activation='selu' )
