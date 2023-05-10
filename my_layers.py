@@ -309,10 +309,10 @@ class DeepInception( Layer):
     branch_initialization = lambda n: [ LayerWrapper() for _ in range( n)]
     ## hardwired parameters of the deep inception module
     self.n_branches = 4 
-    self.branches = branch_initialization( n_branches)
-    self.normalizers = branch_initialization( n_branches) # basically the same as branches
-    self.concatenator = LayerWrapper( Concatenate)
-    self.concatenator.append( SqueezeExcite( n_out[-1], Conv2D( n_out[-1], kernel_size=1, activation='selu' )) )
+    self.branches = branch_initialization( self.n_branches)
+    self.normalizers = branch_initialization( self.n_branches +1) #+ normalizer after concat
+    self.concatenator = LayerWrapper( Concatenate())
+    self.normalizers[-1].append( SqueezeExcite( n_out[-1], Conv2D( n_out[-1], kernel_size=1, activation='selu' )) )
     ## increasinlgy higher coarse graining branches
     # 6 conv, 3 1x1; first branch
     n_op = 6 #number of actual convolution operations
@@ -356,6 +356,7 @@ class DeepInception( Layer):
       for i in range( self.n_branches):
           self.branches[i].freeze( freeze)
           self.normalizers[i].freeze( freeze)
+      self.normalizers[-1].freeze( freeze)
       self.concatenator.freeze( freeze)
 
   def __call__( self, images, x_extra=None, training=False):
@@ -379,7 +380,8 @@ class DeepInception( Layer):
       for i in range( self.n_branches ):
           prediction.append( self.branches[i]( images, training=training ) )
           prediction[-1] = self.normalizers[i]( prediction[-1], x_extra=x_extra, training=training)
-      return self.concatenator( prediction, x_extra=x_extra, training=training )
+      prediction = self.concatenator( prediction, training=training )
+      return self.normalizers[-1]( prediction, x_extra=x_extra, training=training )
 
 
 

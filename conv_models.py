@@ -7,12 +7,12 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalA
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
 from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from my_layers import InceptionModule, DeepInception, LayerWrapper #, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, 
-from hybrid_models import VolBypass
+from hybrid_models import VolBypass, FeaturePredictor
 from my_models import Model
 
 ##################### Convolutional Neural Networks ##################### 
 class ModularInception( VolBypass): 
-  def __init__( self, n_output, n_channels=60, dense=[50,32,16], module_kwargs=dict(), *args, **kwargs):
+  def __init__( self, n_output, n_channels=64, dense=[50,32,16], module_kwargs=dict(), *args, **kwargs):
       """
       Build a very modal deep inception model which takes 2 (new) modular
       deep inception block in a consecutive manner and has a dense block
@@ -28,9 +28,18 @@ class ModularInception( VolBypass):
                     basically number of neurons in the dense part, always
                     uses selu and batch normalization 
       """
+      module_kwargs = module_kwargs.copy()
+      n_channel1 = module_kwargs.pop( 'n_channel1', [0, n_channels] )
+      n_channel2 = module_kwargs.pop( 'n_channel2', n_channels )
+
       super().__init__( n_output, *args, **kwargs)
-      self.conv =  [DeepInception( n_channels, channels='linear', **module_kwargs), DeepInception( n_channels, pooling='max', **module_kwargs)  ]
-      self.conv.append( Flatten() )
+      self.conv =  [DeepInception( n_channels=n_channel1, **module_kwargs), 
+                    DeepInception( n_channels=n_channel2, pooling='max', **module_kwargs)  ]
+      self.feature_concatenator = LayerWrapper()
+      if len( self.conv) == 1:
+        self.feature_concatenator.append( GlobalAveragePooling2D() )
+      else:
+        self.feature_concatenator.append( Flatten() )
       self.dense = LayerWrapper()
       for n_neuron in dense:
           self.dense.append( Dense( n_neuron, activation='selu') )
@@ -44,22 +53,82 @@ class ModularInception( VolBypass):
      for layer in self.conv:
          try: layer.freeze( freeze) #its a layer wrapper
          except: pass #its flatten etc.
+     self.feature_concatenator.freeze( freeze)
      self.dense.freeze( freeze)
 
-  def call( self, images, x=None, training=False):
+  def predict_conv( self, images, features=None, x_extra=None, training=False):
+      """
+      Evaluate the main contribution of this class for the prediction, 
+      i.e. the deep inception modules and yield the final prediction
+      Parameters:
+      -----------
+      images:   tensorflow.tensor
+                image data of 4 channels, required for the prediction
+      x_extra:      tensorflow.tensor
+                    feature vector to append to the dense model
+      training: bool, default False
+                flag to inform the model wheter its currently training
+      """
+      if x_extra is None and self.vol_slice.stop == 2:
+          x_extra = tf.reshape( features[:,1], (-1,1) ) 
+      for layer in self.conv:
+          images = layer( images, x_extra=x_extra, training=training)
+      images = self.feature_concatenator( images, training=training)
+      return self.dense( images, training=training)
+
+  def call( self, images, x=None, x_extra=None, training=False):
       """ 
       Parameters:
       -----------
       images:       tensorflow.tensor
                     image data of 4 channels required for the prediction
       x:            tensorflow.tensor
-                    features required for the volume fraction prediction if enabled 
+                    features required for the volume fraction bypass if enabled 
+      x_extra:      tensorflow.tensor
+                    feature vector to append to the dense model
       """
-      for layer in self.conv:
-          images = layer( images, training=training)
+      prediction = self.predict_conv( images, x, x_extra, training=training)
       if self.vol_enabled:
-          return self.predict_vol( x, training=training) + self.dense( images, training=training)
-      return self.dense( images, training=training)
+          prediction += self.predict_vol( x, training=training) 
+      return prediction
+
+
+class InceptionHybrid(FeaturePredictor, ModularInception):
+  """ 
+  Build the hybrid model using the new inception blocks and the previous
+  feature features
+  Literally all functionality should be inherited
+  """
+  def __init__( self, *args, **kwargs):
+      super().__init__( *args, **kwargs)
+
+  def call( self, images, x=None, training=False):
+    pred = self.predict_features( x, training=training)
+    pred += self.predict_conv( images, training=training )
+    if self.vol_enabled:
+        pred += self.predict_vol( x, training=training )
+    return pred
+
+
+class ArchitectureTest( VolBypass):
+    ### here i run super basic architectures and simply test out a few hypothesis
+  def __init__( self, n_output, dense=[32,25,16], *args, **kwargs ):
+    super().__init__( n_output)
+    n_strided = 8
+    self.architecture = LayerWrapper()
+    self.architecture.append( AvgPool2DPeriodic(2) )
+    for i in range( n_strided):
+        self.architecture.append( Conv2DPeriodic( 64, kernel_size=3, strides=2) )
+        self.architecture.append( Conv2DPeriodic( 64, kernel_size=3) )
+        self.architecture.append( Conv2D( 64, kernel_size=1, activation='selu' ) )
+    self.architecture.append( Flatten() )
+    for n_neuron in dense:
+        self.architecture.append( Dense( n_neuron, activation='selu') )
+        self.architecture.append( BatchNormalization() )
+    self.architecture.append( Dense( n_output, activation=None) )
+
+  def call( self, images, x, training=False, *args, **kwargs):
+      return self.architecture( images, training=training) 
 
 
 
