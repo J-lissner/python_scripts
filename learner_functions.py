@@ -27,6 +27,7 @@ def train_step(x, y, model, loss_object, **model_kwargs):
     return gradients, loss, y_pred
 
 
+### different loss functions
 def relative_mse( y, y_pred, axis=None):
     """
     Compute the relative MSE for the predicted values. The mse 
@@ -52,6 +53,8 @@ def relative_mse( y, y_pred, axis=None):
     loss   = error/y_norm
     return loss**0.5
 
+
+##### Learning rate schedule related things
 def slashable_lr():
     """ have all lr objects  which contain the slash function (must inherit
     from father method) in one tuple, used for isinstance comparison"""
@@ -63,23 +66,8 @@ def is_slashable( lr_object):
     custom_lrs = slashable_lr()
     return isinstance( lr_object, custom_lrs) or (lr_object in custom_lrs )
 
-thetas = []
-def estimate_max_lr( model, learnrate):
-    """
-    call this every iteration, i.e. batch and get an estimate of the LR
-    pass the model and the current learnrate
-    """
-    if len( thetas) <3:
-        thetas.append( [x.numpy().copy() for x in model.trainable_variables] )
-    elif len( thetas) == 3:
-      upper_part = sum([ np.abs( x - y).sum() for x,y in zip( thetas[1], thetas[0] )] )
-      lower_part = sum([ np.abs( 2*x - y - z ).sum() for x,y,z in zip( thetas[1], thetas[0], thetas[2] )] )
-      print( 'estimated maxumim learnrate:', learnrate*upper_part/lower_part )
-      for i in range( 3):
-        thetas[i] = None
-      thetas.append(None)
 
-class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
+class LRSchedules( tf.keras.optimizers.schedules.LearningRateSchedule):
     """
     This is the parent class for all my variable learning rates to inherit 
     some default behaviour and methods
@@ -157,6 +145,7 @@ class LRSchedules(  tf.keras.optimizers.schedules.LearningRateSchedule):
           return self.max_lr
 
     def slash( self, slash=10**0.5):
+        """ adjust the learning rate from a remote trigger"""
         self.learnrate /= slash 
 
     def __call__( self, step):
@@ -212,7 +201,7 @@ class RemoteLR(LRSchedules):
         self.max_lr           = None
         self.allow_stopping   = False 
         self.model_parameters = []
-        self.first_slash      = 1/99 #any float value to false the ==
+        self.first_slash      = 1/99 #any float value to false the == condition
         self.slash_decay = slash_decay #whether or not to slash the weight decay
         self.slash_epoch = []
         self.step = 0
@@ -223,7 +212,7 @@ class RemoteLR(LRSchedules):
         Adjust the learning rate, only allow for an interference from
         a remote call when not increasing the leranrate
         """
-        self.slash_epoch.append( self.step)
+        self.slash_epoch.append( self.step) #tracking variable
         ## if we are at the first phase of constant lr
         if self.phase == 0:
             self.phase += 1
@@ -348,72 +337,6 @@ class SuperConvergence(LRSchedules):
         else:
             return self.learnrate  #warmup
 
-class JumpingLR( tf.keras.optimizers.schedules.LearningRateSchedule):
-    """
-    Have a constant but jumpy learning rate
-    Starts of with the base learnrate, increases it n-amount of times, 
-    and then decreases again
-    """
-    def __init__( self, n_batches, base_learnrate=1e-3, scaling_factor=10**0.5, **timers):
-        """
-        Initialize internal variables, does contain default keyworded
-        arguments
-        Parameters:
-        -----------
-        n_batches:      int,
-                        batches per epoch
-        base_learnrate: float, default 1e-3
-                        learnrate with which the algorithm starts out
-        scaling_factor: float, default \sqrt(10)
-                        factor of which to adjust the learning rate each jump
-        **timers with default kwargs
-          n_up:         int, default 2
-                        how many jumps upward (these come first)
-          n_down:       int, default 6
-                        how many jumps downward (these come later
-          holdout_delay:int, default 10
-                        how long to wait at most between each lr jump
-          warmup:       int, default 20
-                        how many epochs to have before the first phase 
-        """
-        self.n_up          = timers.pop( 'n_up', 2 ) +1
-        self.n_down        = timers.pop( 'n_down', 6 )
-        self.holdout_delay = timers.pop( 'holdout_delay', 10 ) * n_batches
-        self.warmup        = timers.pop( 'warmup', 20  ) *n_batches
-        if self.warmup == 0: 
-            self.warmup = 1 #idk if calling starts at 0 or 1, makes sure
-        self.learnrate      = base_learnrate
-        self.steps          = n_batches * self.holdout_delay
-        self.phase          = 0 if self.warmup >= 1 else 1
-        self.scaling_factor = scaling_factor
-        self.allow_stopping = False
-
-
-    def readjust( self ):
-        """ 
-        Adjust the learning rate by either jumping up or down,
-        depending on the amount of previous calls
-        """
-        if 0 < self.phase < self.n_up:
-            self.learnrate *= self.scaling_factor 
-        elif self.phase < self.n_down + self.n_up:
-            self.learnrate /= self.scaling_factor 
-        self.phase += 1 #which phas of learning rate
-        if self.phase == self.n_down + self.n_up:
-            self.allow_stopping = True
-
-    def slash( self, *args, **kwargs):
-        """ shadow readjust to have method compliance"""
-        return self.readjust( *args, **kwargs)
-
-    def __call__( self, step):
-        if step == self.warmup:
-            self.readjust()
-        elif (step - self.warmup) % self.holdout_delay == 0:
-            self.readjust() 
-        return self.learnrate
-
-
 
 
 class LinearSchedule(LRSchedules):
@@ -448,49 +371,4 @@ class LinearSchedule(LRSchedules):
 
 
 
-
-
-### deprecrated or tests 
-def train(epochs, stopping_delay, x_train, y_train, n_batches, model, optimizer, loss_metric, x_valid, y_valid):
-    """
-    # This was just one idea, but i think i will scratch that
-    def train( model, n_epoch, stopping_delay, spike_delay, n_batches, *data, **minimizers):
-    bruh idk if i should have a function with that many parameters
-    I think if i just put all the optimizer and loss stuff to kwargs then its managable, also *data, **minimizers
-    """
-    while i <= epochs and decline <= stopping_delay: 
-        batched_data = get.batch_data( x_train, y_train, n_batches )
-        batch_loss   = []
-        k            = 0
-        for x_batch, y_batch in batched_data:
-            gradient, _, y_pred = train_step( x_batch, y_batch, ANN, cost_function) 
-            optimizer.apply_gradients( zip(gradient, ANN.trainable_variables) )
-            k += 1
-            batch_loss.append( loss_metric( y_batch, y_pred) )
-        loss_t = np.mean( batch_loss) 
-        # epoch post processing
-        _, loss_v = evaluate( x_valid, y_valid, ANN, loss_metric)
-        valid_loss.append( loss_v.numpy() )
-        train_loss.append( loss_t ) 
-        if valid_loss[-1] < valid_loss[best_epoch]: #TODO more sophisticated criteria
-            #current idea: also that the validation is not e.g. 10 times larger than the training error
-            best_epoch = i
-            decline    = 0
-            checkpoint_manager.save() 
-        print( 'this is my spike counter{} this is my got_worse {}'.format( spike_counter, decline) )
-        if valid_loss[-1] < train_loss[-1]: #while underfit, keep training
-            spike_counter += 1
-            if spike_counter >= spike_delay:
-                print( '!!!!!!!!!!!!!!!! i am resetting my decline because i am underfit !!!!!!!!!!!!!!!!!!1')
-                decline = 0
-        else:
-            spike_counter = 0
-        decline += 1
-        i += 1
-        if i % 500 == 0:
-            toc('trained for 500 epochs')
-            print( 'current validation loss:\t{:.5f} vs best:\t{:.5f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
-            print( 'vs current train loss:  \t{:.5f} vs best:\t{:.5f}'.format( train_loss[-1], train_loss[best_epoch] ) )
-            tic('trained for 500 epochs', True)
-    return model, losses
 
