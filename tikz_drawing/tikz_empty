@@ -1,0 +1,67 @@
+
+\documentclass[preview,10pt,border=0pt,graphics]{standalone}
+\usepackage{fontspec}
+\setsansfont[
+  BoldFont = UniversforUniS65Bd-Regular,
+  ItalicFont = UniversforUniS45LtObl-Rg,
+  BoldItalicFont = UniversforUniS45LtObl-Rg,
+  Scale = MatchUppercase]{UniversforUniS55Rm-Regular}
+\renewcommand{\familydefault}{\sfdefault}
+% \usepackage[latin1]{inputenc}
+% % 'french' funktioniert nicht mit package "bilndtext"
+% %\usepackage[latin,french,english,german,ngerman]{babel}
+% 
+% \usepackage{uarial}
+% \usepackage[T1]{fontenc}
+
+% \usepackage[german,ngerman]{babel}
+% \usepackage[ngerman]{babel}
+\usepackage[english]{babel}
+\usepackage{lipsum}
+\usepackage{blindtext}
+\usepackage{eurosym}
+\usepackage{graphicx}
+\usepackage{amsmath,amsthm,amstext,amssymb}
+\usepackage{xcolor,color}
+\usepackage{pifont}
+\usepackage{array}
+\usepackage{upgreek}
+\usepackage{pgf}
+\usepackage{tikz}
+\usepackage{scalefnt}
+\usepackage{pgfplots}
+\usepackage{mathrsfs}
+
+\input{DAE_latex_macros.tex}
+\input{DAE_tikz_macros.tex}
+
+\parindent=0mm
+% \renewcommand{\footskip}{3pt}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage[absolute]{textpos}
+\setlength{\TPHorizModule}{1mm}%
+\setlength{\TPVertModule}{1mm}%
+
+
+\newcommand{\imageBox}[3]{% ARGUMENTS: Height, image file
+\setlength{\fboxsep}{#3}%
+\setlength{\fboxrule}{0pt}%
+\fbox{\includegraphics[height=#1]{#2}}}%
+
+\newcommand{\fimageBox}[4]{% ARGUMENTS: Height, image file, sep (all around), framewidth
+\setlength{\fboxsep}{#3}%
+\setlength{\fboxrule}{#4}%
+\fbox{\includegraphics[height=#1]{#2}}}%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+\colorlet{challengeColor}{uniSred!65!white}
+\fontsize{9pt}{12pt}\selectfont
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \draw[style=help lines] (0,0) grid (20,9);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
