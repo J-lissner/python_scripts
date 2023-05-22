@@ -416,10 +416,11 @@ class SqueezeExcite(Layer):
         super().__init__( *args, **kwargs)
         n_channels = [n_channels] if not hasattr( n_channels, '__iter__') else list( n_channels)
         n_channels = 2*n_channels if len( n_channels) == 1 else n_channels
+        reduced_representation = max( n_channels[0]//reduction_ratio, 4)
         layer = (lambda x, *args, **kwargs: x)  if layer is None else layer
         self.pooling = GlobalAveragePooling2D()
         self.se_block = LayerWrapper()
-        self.se_block.append( Dense( n_channels[0]//reduction_ratio, activation='selu') )
+        self.se_block.append( Dense( reduced_representation, activation='selu') )
         self.se_block.append( Dense( n_channels[1], activation='sigmoid' ))
         self.layer = layer
 
