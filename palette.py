@@ -9,13 +9,17 @@ class UniStuttgart:
     from palette import UniStuttgart as uniS
     ... color=uniS.blue, ... etc.  
     """
+    black       = '#000000'
     blue        = '#004191'
     lightblue   = '#00beff'
     lblue       = '#00beff'
     magenta     = '#ec008d'
+    darkgreen   = '#00c832'
     green       = '#8dc63f'
     red         = '#ee1c25'
     yellow      = '#ffdd00'
+    day9yellow  = '#ffa71a'
+    orange      = '#f36f23'
     grey        = '#323232'
     grey10      = '#ececed'
     grey20      = '#d8dadb'
@@ -45,6 +49,9 @@ class UniStuttgart:
     lblue80     = '#33cbff'
     lblue60     = '#66d8ff'
     lblue40     = '#99e5ff'
+    
+    colorwheel = [lblue, day9yellow, green, blue, magenta, gray30, red ]
+    color_wheel = colorwheel
 
     def __init__( self):
         """
@@ -61,6 +68,12 @@ class UniStuttgart:
         """
         pass
 
+
+def default_colorwheel():
+    """
+    Get the colors of the default colorwheel using this template
+    """
+    return uniS.colorwheel
 
 def color_mixer( color_1, color_2, mixing_ratio=0.5, return_type='rgb'):
     """
