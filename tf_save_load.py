@@ -46,13 +46,14 @@ class Saver():
                         deletes the folder if it already exists
         script_path:    string, default None
                         path on where to look for default scripts used in main
-                        Defaults to the script path of me (lissner)
+                        Defaults to '/home/USER/scripts/python/tensorflow_functions'
         Returns:
         --------
         None:           stores files in the specified location
         """
         if script_path is None:
-            self.script_path = '/home/lissner/scripts/python/tensorflow_functions/'
+            user = os.environ.get( 'USER' )
+            self.script_path = f'/home/{user}/scripts/python/tensorflow_functions/'
         else: 
             self.script_path = script_path
             if script_path[-1] != '/':

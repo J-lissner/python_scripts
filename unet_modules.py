@@ -7,7 +7,8 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalA
 from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D
 from tensorflow.keras.layers import Concatenate, Add, concatenate
 
-from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
+from my_layers import NormalizationLayer, LayerWrapper
 
 class SidePredictor( Layer):
   """
@@ -42,6 +43,7 @@ class SidePredictor( Layer):
     self.cg_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu') )
     #concatenate of upsampled (features and prediction) and cg processor
     self.feature_processor = LayerWrapper( Concatenate() )
+    self.feature_processor.append( NormalizationLayer( 3*n_channels + n_out) ) #bypass, up, cg_processor
     self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
     self.feature_processor.append( Conv2DPeriodic( n_channels, kernel_size=3) )
     self.feature_processor.append( Conv2D( n_channels, kernel_size=1, activation='selu') )
@@ -136,10 +138,45 @@ class FeatureConcatenator( Layer):
 
 
 class Predictor( Layer):
+  def __init__( self, n_out, n_in=None, *args, **kwargs):
+    """
+    Parameters:
+    -----------
+    n_out:  int,
+            number of channels to predict
+    n_int:  int, default None
+            number of input channels. Required for NormalizationLayer
+            if given it will preceed the 1x1-SnE layer.
+    """
+    super().__init__( *args, **kwargs)
+    self.predictor = LayerWrapper()
+    if n_in is not None: 
+        self.predictor.append( NormalizationLayer( n_in) )
+    branch1 = Conv2D( 2*n_out, kernel_size=1)
+    branch2 = [Conv2DPeriodic( 2*n_out, kernel_size=3), Conv2DPeriodic( 2*n_out, kernel_size=3) ]
+    generic_resnet = LayerWrapper()
+    generic_resnet.append( branch1 )
+    generic_resnet.append( branch2 )
+    self.predictor.append( generic_resnet)
+    self.predictor.append( Add() )
+    self.predictor.append( Conv2D( 2*n_out, kernel_size=1, activation='selu') )
+    self.predictor.append( Conv2D( n_out, kernel_size=1, activation=None, name='final_predictor') )
+    self.direct_upsampler = UpSampling2D() #only required for specific model type
+  
+  def freeze( self, freeze=True):
+    self.predictor.freeze( freeze)
+
+  def __call__( self, images, prediction=None, *layer_args, **layer_kwargs):
+    if prediction is not None:
+        prediction = self.direct_upsampler( prediction)
+        return prediction + self.predictor( images)
+    return self.predictor( images)
+
+class ExperimentalPredictor( Layer):
   def __init__( self, n_out, *args, **kwargs):
     super().__init__( *args, **kwargs)
     self.predictor = LayerWrapper()
-    for i in range( 2): #now with two resnet modules at last level
+    for i in range( 1): #now with two resnet modules at last level
         branch1 = Conv2D( 2*n_out, kernel_size=1)
         branch2 = [Conv2DPeriodic( 2*n_out, kernel_size=3), Conv2DPeriodic( 2*n_out, kernel_size=3) ]
         generic_resnet = LayerWrapper()

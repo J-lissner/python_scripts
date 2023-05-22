@@ -5,8 +5,7 @@ from tensorflow.math import ceil
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
 from tensorflow.keras.layers import concatenate, Flatten, Concatenate
-from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
-from my_layers import InceptionModule, DeepInception, LayerWrapper #, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, 
+from my_layers import InceptionModule, DeepInception, LayerWrapper, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
 from hybrid_models import VolBypass, FeaturePredictor
 from my_models import Model
 

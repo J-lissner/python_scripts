@@ -157,7 +157,7 @@ class ResxBlock( ResBlock):
         """
         see above, inherited from ResBlock, pracitcally the same
         """
-        super().__init__( *args, **kwargs)
+        super().__init__( n_out, strides=strides, sne=sne, blowup=blowup, *args, **kwargs)
         self.block = LayerWrapper( [] )
         n_channels = n_out // 2 
         n_branch = n_channels // cardinality

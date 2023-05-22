@@ -16,7 +16,8 @@ import tf_functions as tfun
 import learner_functions as learn
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
 from unet_modules import InceptionEncoder, FeatureConcatenator, SidePredictor, LayerWrapper, Predictor, InceptionUpsampler
-from other_functions import Cycler, tic, toc
+from general_functions import Cycler, tic, toc
+
 
 
 class MultilevelNet( ABC):
@@ -306,6 +307,7 @@ class SlimNet( Model, MultilevelNet):
     self.coarse_grainers = [ AvgPool2DPeriodic( 2**(i+1)) for i in range(n_levels)][::-1] #the average pooling layers are required here
     self.coarse_grainers.append( lambda x: x)
     self.full_predictor = True
+    self.n_in = n_channels + n_out + 1 #required for predictor with new normalization
     self.replace_predictor() #default to slim predictor, swaps the variable above
 
 
@@ -313,7 +315,7 @@ class SlimNet( Model, MultilevelNet):
       try: del self.predictor
       except: pass 
       if not self.full_predictor:
-          self.predictor = Predictor( self.n_out)
+          self.predictor = Predictor( self.n_out, self.n_in)
       else:
           self.predictor = LayerWrapper( Conv2D( self.n_out, kernel_size=1) )
       self.full_predictor = not self.full_predictor 

@@ -14,7 +14,7 @@ import data_processing as get
 import tf_functions as tfun
 import learner_functions as learn
 from conv_layers_old import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
-from other_functions import Cycler, tic, toc
+from general_functions import Cycler, tic, toc
 
 
 class VolBypass( Model): 
@@ -145,7 +145,7 @@ class VolBypass( Model):
     n_epochs       = kwargs.pop( 'n_epochs', 5000)
     roll_images    = kwargs.pop( 'roll_images', False)
     batchsize    = kwargs.pop( 'batchsize', 25)
-    stopping_delay = kwargs.pop( 'stopping_delay', 50) 
+    stopping_delay = kwargs.pop( 'stopping_delay', 25) 
     if predictor is None:
         predictor = self.call
     if roll_images:
@@ -160,9 +160,9 @@ class VolBypass( Model):
         learning_rate       = 0.05 
         optimizer           = tf.keras.optimizers.Adam( learning_rate=learning_rate) 
     else:
-        plateau_threshold = 0.93
+        plateau_threshold = 0.95
         learning_rate = learn.RemoteLR()
-        optimizer = tfa.optimizers.AdamW( learning_rate=learning_rate, weight_decay=1e-4, beta_1=0.8, beta_2=0.85)
+        optimizer = tfa.optimizers.AdamW( learning_rate=learning_rate, weight_decay=5e-4, beta_1=0.8, beta_2=0.85)
         learning_rate.reference_optimizer( optimizer)
         learning_rate.reference_model( self)
     loss                = tf.keras.losses.MeanSquaredError() 
@@ -204,12 +204,17 @@ class VolBypass( Model):
           if learn.is_slashable( learning_rate) and not learning_rate.allow_stopping:
               learning_rate.slash()
               overfit = 0
+              if learning_rate.allow_stopping:
+                  plateau_loss = plateau_loss/plateau_threshold
+                  plateau_threshold = 1
+                  stopping_delay = 5
           else:
               break
       if (i+1) % debug_interval == 0:
-          toc( '{}: {} additional epochs'.format( predictor.__name__, debug_interval) )
-          print( 'current partial val loss:  {:.6f}  vs best  {:.6f}'.format( valid_loss[-1], valid_loss[best_epoch] ) )
-          tic( '{}: {} additional epochs'.format( predictor.__name__, debug_interval), silent=True ) 
+          toc( f'{predictor.__name__}: {debug_interval} additional epochs', auxiliary= f', {i} total epochs' )
+          print( f'current valid loss:\t{valid_loss[-1]:.2e}   vs best: {valid_loss[best_epoch]:.3e}' )
+          print( f'current batch loss:\t{train_loss.numpy():.2e}' )
+          tic( '{predictor.__name__}: {debug_interval} additional epochs', silent=True ) 
     ## restore the best model
     if y_valid is not None:
         checkpoint.restore( checkpoint_manager.latest_checkpoint)
@@ -238,11 +243,14 @@ class FeaturePredictor( VolBypass):
     """ dense model which predicts the features derived from the Conv Net """
     self.feature_regressor = []
     layers                 = self.feature_regressor
-    layer = lambda n_neuron: Dense( n_neuron, activation=activation) 
-    for i in range( len( neurons)):
-        layers.append( layer( neurons[i] ) )
+    activation = [activation] if not isinstance( activation, (list, tuple)) else activation
+    activation = Cycler( activation)
+    layer = lambda n_neuron: Dense( n_neuron, activation=next(activation) ) 
+    layers.append( layer( neurons[0] ) )
+    for i in range(1,  len( neurons)):
         if batch_normalization:
             layers.append( BatchNormalization() )
+        layers.append( layer( neurons[i] ) )
     layers.append( Dense( self.n_output) )
 
   def freeze_feature_predictor( self, freeze=True):
@@ -255,19 +263,22 @@ class FeaturePredictor( VolBypass):
 
   def predict_features( self, x, training=False):
     """ only predict the part taking all of the features """
-    x = x[:,self.feature_slice]
+    if self.vol_enabled: #remove vol from feature set if its enabled
+        x = x[:,self.feature_slice]
     for layer in self.feature_regressor:
         x = layer( x, training=training)
     return x
 
-  def call(self, x, training=False, *args, **kwargs):
+  def call(self, x, *args, training=False, **kwargs):
     """ call function given a feature vector which has the volume
     fraction in the first dimension, and the remaining features in
     the rest"""
-    vol = tf.reshape( x[:,self.vol_slice], (-1, self.vol_slice.stop) )
-    x_vol = self.predict_vol( vol, training=training )
-    x_fts = self.predict_features( x, training=training)
-    return x_fts + x_vol
+    if x.ndim > 2: #if the image data is passed as first argument
+        x = args[0] #assumes that the features are given in args
+    prediction = self.predict_features( x, training=training)
+    if self.vol_enabled:
+        prediction += self.predict_vol( x, training=training) 
+    return prediction
 
 
 class DualInception( FeaturePredictor):

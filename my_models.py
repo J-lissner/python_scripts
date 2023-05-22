@@ -3,7 +3,7 @@ import numpy as np
 from tensorflow.math import ceil
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, concatenate
-from other_functions import Cycler
+from general_functions import Cycler
 import data_processing as get
 
 
@@ -36,12 +36,14 @@ class Model( Model):
                   how large the batches should be
       *inputs:    list of tf.tensor like
                   input data to predict
+      predictor:  self.callable, default None
+                  callable of the model to evaluate, defaults to self.call
       **kwargs:   other keyworded options for the call,
                   also takes input data
       Returns:
       --------
       prediction: tensorflow.tensor
-                  prediction of the model when using self.call()
+                  evaluation of the (partial) model prediction 
       """
       if predictor is None:
           predictor = self

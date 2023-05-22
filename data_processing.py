@@ -5,57 +5,47 @@ try: import tensorflow as tf
 except: pass
 
 ##################### GENERAL DATA TRANSFORMATION FOR ARBITRARY DATA ####################
-def split_data( inputs, outputs, split=0.3, shuffle=True, slave_inputs=None, slave_outputs=None):
+def split_data( *data, split=0.3, shuffle=True):
     """ 
-    Randomly shuffle the data and thereafter split it into two sets 
-    Arranges the data row-wise if it is given column wise (return arrays, each row one sample)
-    (Note that this function assumes that there are more samples than dimensions of the problem)
+    split the given data or arrays into two sets, calls them train and valid set
+    The data can be shuffled if requested
     Parameters:
     -----------
-    inputs:         numpy nd-array
-                    input data (preferably) arranged row wise
-    outputs:        numpy nd-array
-                    output data (preferably) arranged row wise
+    *data           undefined number of numpy.nd-arrays
+                    the amount of samples is given in the number of rows and
+                    it must not neccessarily match, but be a multiple of each other
     split:          float, default 0.3
                     percentage part of the second set (validation set)
     shuffle:        bool, default True
                     randomly shuffly the data before splitting
-    slave_inputs:   numpy nd-array, default None
-                    Any dependend input data which should be split analogously
-    slave_outputs:  numpy nd-array, default None
-                    Any dependend output data which should be split analogously
     Returns:
     --------
-    x_train, y_train, x_valid, y_valid:     nd-numpy arrays
-                Input (x) and output (y) values as a training and validation set
+    data_train, data_valid:     nd-numpy arrays
+                    2*n arrays of data split in two sets
     """
     # It is assumed that there is more data provided than dimension of the input/output 
     # Hence, transpose the data if it is arranged "column wise"
-    if inputs.shape[0] < inputs.shape[1] and inputs.ndim < 3:
-        print( 'Transposing inputs before splitting and shuffling such that each row is one data-sample')
-        print( '...returning row wise aranged inputs')
-        inputs = inputs.T
-    if outputs.shape[0] < outputs.shape[1] and outputs.ndim < 3:
-        print( 'Transposing outputs before splitting and shuffling such that each row is one data-sample')
-        print( '...returning row wise aranged outputs')
-        outputs = outputs.T
-    n_data  = inputs.shape[0]
-    n_train = ceil( (1-split) * n_data )
+    n_samples  = [ int(x.shape[0]) for  x in data] 
+    n_split = min(n_samples) #how many samples are taken for reference for splitting
+    multiples = [ x//n_split for x in n_samples]
+    n_train = ceil( (1-split) * min( n_samples) )
+
     if shuffle is True:
-        shuffle = np.random.permutation(n_data)
-        inputs = inputs[shuffle]
-        outputs = outputs[shuffle]
-        slave_inputs = slave_inputs[shuffle] if slave_inputs is not None else slave_inputs
-        slave_outputs = slave_outputs[shuffle] if slave_outputs is not None else slave_outputs
-    ## conditional return statements depending on the amount of sets
-    if slave_inputs is None and slave_outputs is None: 
-        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:]
-    elif slave_outputs is None:
-        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_inputs[:n_train], slave_inputs[n_train:]
-    elif slave_inputs is None:
-        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_outputs[:n_train], slave_outputs[n_train:]
+        shuffle = np.random.permutation( n_split)
     else:
-        return inputs[:n_train], outputs[:n_train], inputs[n_train:], outputs[n_train:], slave_inputs[:n_train], slave_inputs[n_train:], slave_outputs[:n_train], slave_outputs[n_train:]
+        shuffle = np.arange( n_split )
+    train_set = []
+    valid_set = []
+    for i in range( len(data)):
+        train_set.append( [data[i][shuffle[:n_train] ] ] )
+        valid_set.append( [data[i][shuffle[n_train:] ] ] )
+        for j in range( 1, multiples[i] ):
+            train_set[-1].append( data[i][j*n_split + shuffle[:n_train] ] )
+            valid_set[-1].append( data[i][j*n_split + shuffle[n_train:] ] )
+        train_set[-1] = np.concatenate( train_set[-1], axis=0 )
+        valid_set[-1] = np.concatenate( valid_set[-1], axis=0 )
+    return *train_set, *valid_set
+
 
 
 
