@@ -1,2 +1,11 @@
-# Ignore temp files
-__pycache__/
+# ignore 
+modified_modules/
+stale_code/
+backup
+deprecrated_codes/
+**/__pycache__/
+**/test*
+
+*.swp
+*.bak
+*.pdf
