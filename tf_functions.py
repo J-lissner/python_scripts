@@ -39,9 +39,8 @@ def to_float32( *args, arraytype='numpy'):
 def batch_data( batchsize, data, shuffle=True):
     """
     Generator/Factory function, yields 'n_batches' batches when called in a for loop
-    The last batch is the largest if the number of samples is not integer divisible by 'n_batches'
-    (the last batch is at most 'n_batches-1' larger than the other batches)
-    things as i want
+    The last batch is the smallest if the number of samples is not integer divisible
+    by 'n_batches' (yielding the remaining samples)
     Parameters
     ----------
     n_batches       int
@@ -56,28 +55,26 @@ def batch_data( batchsize, data, shuffle=True):
                     all of the tensors batched as in given order 
     """ 
     data = [data] if not isinstance( data, (list, tuple)) else data
-    n_samples = data[-1].shape[0]
+    n_samples = [x.shape[0] for x in data]
     if shuffle:
-        permutation = tf.random.shuffle( tf.range( n_samples, dtype=tf.int32) )
+        permutation = tf.random.shuffle( tf.range( max(n_samples), dtype=tf.int32) )
     else:
-        permutation = tf.range( n_samples, dtype=tf.int32 ) 
-    n_batches = int( tf.math.floor( n_samples/ batchsize) )
+        permutation = tf.range( max( n_samples), dtype=tf.int32 ) 
+    n_batches = int( tf.math.ceil( max( n_samples)/ batchsize) )
     i         = -1 # set a value that for n_batches=1 it does return the whole set
     for i in range( n_batches-1):
         idx   = permutation[i*batchsize:(i+1)*batchsize]
         batch = []
-        for x in data:
-            batch.append( tf.gather( x, idx) )
+        for x, n_max in zip( data, n_samples):
+            batch.append( tf.gather( x, idx % n_max) )
         yield batch
     idx   = permutation[(i+1)*batchsize:]
     batch = []
-    for x in data:
-        batch.append( tf.gather( x, idx) )
+    for x, n_max in zip( data, n_samples):
+        batch.append( tf.gather( x, idx % n_max) )
     yield batch
 
 ## general image related functions
-## the tf.function decorator might has to yeet away, if not using inplace
-@tf.function
 def roll_images( data, part=0.5):
     """
     Given periodic images of shape (n_samples, n_1, n_2, n_channels)
@@ -98,10 +95,12 @@ def roll_images( data, part=0.5):
     --------
     None:       all the input tensors are changed in place
     """
-    data = [data] if not isinstance( data, list) else data
-    n_images = data[0].shape[0]
+    data = [data] if not isinstance( data, (list, tuple)) else data
+    shape = data[0].shape
+    n_images = shape[0]
     n_roll   = int( n_images*part )
-    img_dim  = data[0].shape[1:3]
+    img_dim  = shape[1:-1]
+    ndim = len( shape) - 2 #samples, channels commented out
     max_roll = min( img_dim)
     indices  = tf.range( n_images, dtype=tf.int32) 
     indices = tf.random.shuffle( indices)
@@ -109,12 +108,11 @@ def roll_images( data, part=0.5):
     roll    = tf.random.uniform( shape=(n_roll, len(img_dim) ), minval=0, maxval=max_roll, dtype=tf.int32 )
     for x in data:
         tf.debugging.Assert(isinstance( x,  tf.Variable), ['roll_images needs tf.Variable(images)'] ) 
-    j = 0
-    for i in indices:
-        for x in data:
-            x[i].assign( tf.roll( x[i], roll[j], axis=[0,1] ) )
+    for x in data:
+        j = 0
+        for i in indices:
+            x[i].assign( tf.roll( x[i], roll[j], axis=list(range(ndim) ) ) )
         j += 1
-
 
 
 ## generally usable functions 
