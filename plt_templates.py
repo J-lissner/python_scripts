@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt 
-#import sys
-#sys.path.append('plt_template/')
+import matplotlib.font_manager as fm
+import matplotlib
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.patches import Rectangle
+## personal packages
 from palette import UniStuttgart as uniS
 
-import matplotlib.font_manager as fm
 print( '"import plt_templates..." Default parameters for matplotlib.pyplot ",\
       have to be updated, use "plt.rcParams.update( plt_templates.rc_default())"')
 
@@ -12,26 +14,22 @@ def linestyles( *args, **kwargs):
     """
     Pre defined linecolors given in a list, for each entry in the list there is one color
     The corporate colors are given in this order:
-    blue, lightblue, green, magenate, gray, red, yellow
-
+    blue, lightblue, green, magenate, gray, red, yellow 
     can be used by e.g. plt.plot( x,y, **ls[0] )
     The given input arguments (args, kwargs) modify the style for every line.
-    The input arguments can be interpreted as plt.plot( x, y, *args, **kwargs)
-
+    The input arguments can be interpreted as plt.plot( x, y, *args, **kwargs) 
     Parameters. optional:
     ---------------------
     *args:      unpacked list
                 additional linestyles specified for each line via args
     **kwargs:   unpacked dict
                 additional linestyles specified for each line via kwargs
-    To see the available options see "help( plt.plot)" for reference
-
+    To see the available options see "help( plt.plot)" for reference 
     Returns:
     --------
     linestyles:     list
                     list of specified linestyles of various colors
-    """
-
+    """ 
     styles = []
     styles.append( dict( *args, color=uniS.blue,    **kwargs ) ) # dark blue
     styles.append( dict( *args, color=uniS.lblue,   **kwargs ) ) # light blue
@@ -56,12 +54,10 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
     grid:           bool, default: True
                     If a grid should be plotted per default in each plot
     ticksize:       float, default None
-                    fontsize of the tikz, is set to 0.6*'fontsize' if not specified
-
+                    fontsize of the tikz, is set to 0.6*'fontsize' if not specified 
     **kwargs:       unpacked dict
                     hard overwrites the defaults with any given rcParams (in kwargs). 
-                    If no kwargs are given, the defaults are set
-
+                    If no kwargs are given, the defaults are set 
     Returns:
     --------
     default_params: dict
@@ -93,14 +89,13 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
     default_params.update( {'lines.linewidth': 2, 'lines.markeredgecolor': 'black' } )
     default_params.update( { 'scatter.edgecolors': 'black', 'lines.markersize':4 } )
     ## default color palette to be uniStuttgart colors (cycles for line AND scatterplot
-    default_params.update( {'axes.prop_cycle': plt.cycler('color', [uniS.lblue, uniS.magenta, uniS.green, uniS.blue, uniS.gray30, uniS.red, uniS.yellow ]) } )
-
+    default_params.update( {'axes.prop_cycle': plt.cycler('color', uniS.colorwheel) } ) 
     default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
     return default_params
 
 
 
-def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
+def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, padding=[0,0], **kwargs):
     """
     Return matplotlib fig, axes instance for single plot. 
     Adjusted sizes (font etc) have to be set in the plt.rcParams, not locally on the axes object
@@ -123,9 +118,12 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
                     stretch of each plot in x direction (size adjustment)
     y_stretch:      float, default 1
                     stretch of each plot in y direction (size adjustment)
+    padding:        list of 2 floats:
+                    padding to the left and top of the subplots
+                    NOTE: this parameter is buggy and rescales the subplots
+                        but i will leave it for now and use it for personal purposes
     **kwargs:       dict
-                    input kwargs for plt.subplots( **kwargs), NO GUARANTEES MADE (YET)
-
+                    input kwargs for plt.subplots( **kwargs), NO GUARANTEES MADE (YET) 
     Returns:
     --------
     fig:            matplotlib.pyplot figure object
@@ -133,9 +131,8 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     axes:           matplotlib.pyplot axes object
                     axes handle for the specified plot 
     """
-    cm_conversion = 2.3824 #factor that the specified width/height is given in cm
-
-    ## default spacings
+    ## default parameters and hardwirde constants
+    cm_conversion = 2.3824 #factor that the specified width/height is given in cm 
     x_pad = 0.03 #flaoting space right of the subplot
     y_pad = 0.105 #floating space at the top of the subplot (space for title basically)
     x_offset = 0.2 
@@ -146,14 +143,20 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     default_labelsize = 9 #NOTE HARD WIRED AS A REFERENCE (DOES NOT HAVE TO MATCH "plt_templates" OR YOUR LOCAL "plt.rcParams"
     default_fontsize = 11.7
     #considering the ticksize
-    x_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.053  #yticks
-    y_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.030  #xticks
+    try:
+        x_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.053  #yticks
+    except:
+        x_offset += 0.053 #yticks, default value
+    try:
+        y_offset += (plt.rcParams['xtick.labelsize']/ default_labelsize -1) * 0.030  #xticks
+    except: 
+        y_offset += 0.030  #xticks, default value
     # consideration of labels and title
     x_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.035 #ylabel
     y_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.030 #xlabel
     y_offset += (plt.rcParams['font.size']/ default_fontsize-1 )* 0.047 #title
-    x_offset = x_offset/n_column /x_stretch
-    y_offset = y_offset/n_row /y_stretch
+    x_offset = x_offset /n_column /x_stretch  
+    y_offset = y_offset /n_row /y_stretch    
 
     ## size of the ax and figure
     default_axwidth = 0.97 /n_column  
@@ -162,16 +165,21 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     required_axheight = default_axheight - y_offset
     additional_width = default_axwidth/required_axwidth
     additional_height = default_axheight/required_axheight
-    required_width =   6 /default_axwidth   *x_stretch *additional_width  / cm_conversion
+    required_width =   6 /default_axwidth   *x_stretch *additional_width  / cm_conversion  
     required_height =  5 /default_axheight  *y_stretch *additional_height / cm_conversion
-
+    required_width += padding[0]
+    required_height += padding[1]
+    padding_offset = [padding[0]/required_width, padding[1]/required_height]
+    y_extra = -padding_offset[1]/n_row
+    x_extra = 0#padding_offset[0]/n_column
     ax_position = np.zeros( (n_row, n_column), dtype=object )
     for i in range( n_row):
-        for j in range( n_column):
-            ax_position[i,j] =  [ x_offset + ( default_axwidth + x_pad/n_column )*j, y_offset +(default_axheight+y_pad/n_row )*i, required_axwidth, required_axheight ]  
+      for j in range( n_column):
+        ax_position[i,j] =  [ x_offset + ( default_axwidth + x_pad/n_column + x_extra )*j,
+                    y_offset +(default_axheight+y_pad/n_row + y_extra)*i, required_axwidth, required_axheight ]  
 
     ## setting of figure and axes object
-    fig, axes = plt.subplots( n_row,n_column)
+    fig, axes = plt.subplots( n_row,n_column, **kwargs)
     fig.canvas.draw()
     fig.set_constrained_layout(False)
     fig.set_size_inches( required_width, required_height)
@@ -185,11 +193,235 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, **kwargs):
     for i in range( n_row):
         for j in range( n_column):
             axes[i,j].set_position( ax_position[-(i+1),j] )
-    print( 'Size of the full figure:', round(required_width*cm_conversion,3), 'x', round( required_height*cm_conversion, 3), '[cm]' )
+            axes[i,j].set( xlabel='x', ylabel='f(x)' )
+    print( 'Size of the full figure:', round(required_width*cm_conversion,3), 'x', round( required_height*cm_conversion, 3), f'[cm]; {round( required_width,3)}{round( required_height,3)} [in]' )
     if n_column == 1 and n_row == 1:
         return fig, axes[0][0]
     else:
         return fig, axes.squeeze()
+
+
+#### LEGEND RELATED FUNCTIONS ####
+class HandlerColormap(HandlerBase):
+    """
+    Create some handle which can be used for plotting inside a legend
+    Does have to be paired with a dummy mappable and the label is required
+    to be added manually.
+    It is advised to pair the 'cmap' parameter in the init with a custom
+    colormap, obtained as e.g.
+    from matplotlib.colors import LinearSegmentedColormap as Cmap
+    Cmap.from_list( "", [uniS.gray60, uniS.gray20, uniS.gray] ) ]
+    (full import path: matplotlib.colors.LinearSegmentedColormap)
+    All of this is obtained by the 'get_legend_entries' method, which should
+    be used as ax.legend( **HandlerColormap.get_legend_entries() )
+    """
+    def __init__(self, cmap, label, n_stripes=3, **kwargs):
+        """
+        Parameters:
+        -----------
+        cmap:       matplotlib.pyplot.cm colormap
+                    colormap to plot in the legend
+        label:      string
+                    label to add to the colormap
+        n_stripes:  int, default 3
+                    in how many discrete colors the colormap should be split
+        **kwargs:   kwargs directly passed to the super init
+        """
+        super().__init__(**kwargs)
+        self.label = label
+        self.cmap = cmap
+        self.num_stripes = n_stripes
+
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
+        """ required function for matplotlib internal call """
+        stripes = []
+        for i in range(self.num_stripes):
+            s = Rectangle([xdescent + i * width / self.num_stripes, ydescent],
+                          width / self.num_stripes,
+                          height,
+                          fc=self.cmap((2 * i + 1) / (2 * self.num_stripes)),
+                          transform=trans)
+            stripes.append(s)
+        return stripes
+
+    def get_legend_entries( self, ax=None, other_handlers=[]):
+        """
+        If ax is given the existing legend handles of the axes object
+        are also plotted.
+        Parameters:
+        -----------
+        ax:             matplotlib.pyplot.axes object
+                        axes object where the data was plotted
+        other_handlers: list of HandlerColormap
+                        other colormap handles to add to the legend
+        Returns:
+        --------
+        legend_kwargs:  dict
+                        dict to put into the ax.legend() call as kwargs
+                        Contains all the required handles and labels
+        """
+        labels = []
+        handles = []
+        labels +=  [self.label]
+        handles += [Rectangle(( 0,0), 1, 1) for _ in range( 1+len(other_handlers) )]
+        if ax is not None:
+            additional_labels = ax.get_legend_handles_labels()
+            labels += additional_labels[1]
+            handles += additional_labels[0]
+        handler_map = dict( zip( handles, [self]+other_handlers ))
+        return dict( labels=labels, handles=handles, handler_map=handler_map )
+
+
+
+
+def add_legend( ax, position='top right', opacity=0.8, **kwargs):
+    """
+    Add a legend to the specified ax object. Kwargs do overwrite parameters in plt.rcParams
+    Parameters:
+    -----------
+    ax:         plt.axes object
+                axes in which the legend should be added 
+    position:   string, default 'top right'
+                set the legend in a specified corner ( 'top/upper or bot/lower left/right', has a space in the string
+                A dictionary is also accepted, should contain the keys to specify the position
+                (prefered is 'loc' and 'bbox_to_anchor')
+    opacity.    float, default 0.8
+                opacity of the legend box
+    **kwargs    unpacked dictionary
+                additional parameters to customize the legend, e.g.
+                linewidth or lw
+                handlelength, handletextpad, labelspacing
+                edgecolor, facecolor, fancybox, shadow
+    """
+    if not ax.get_legend_handles_labels()[1]:
+        return #if there is nothing to put in the legend
+    defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
+                      fancybox=False, #shadow=True,  #shadow and opacity dont mix well
+                      edgecolor=uniS.blue, facecolor=uniS.gray20, framealpha=opacity ) 
+    if isinstance( position, str):
+        position = position.replace( '_', ' ' )
+        if position == 'bot left' or position=='lower left':
+            defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
+        elif position == 'top left' or position=='upper left':
+            defaults.update( dict( loc='upper left', bbox_to_anchor=(-0.01,1.015) ) )
+        elif position == 'top right' or position=='upper right':
+            defaults.update( dict( loc='upper right', bbox_to_anchor=(1.005, 1.015) )  )
+        elif position == 'bot right' or position=='lower right':
+            defaults.update( dict( loc='lower right', bbox_to_anchor=(1.005, -0.010) )  )
+    elif isinstance( position, dict):
+        defaults.update( position)
+    else:
+        print( "Non allowed argument for 'position' in 'add_legend', setting default (top right) ")
+        defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
+
+    style= {**defaults, **kwargs} #overwrites the defaults by the kwargs
+    legend = ax.legend(**style)
+    legend.get_frame().set_linewidth( 1.0) 
+    if 'linewidth' in kwargs or 'lw' in kwargs:
+        try: 
+            legend.get_frame().set_linewidth( kwargs['linewidth']) 
+        except:
+            legend.get_frame().set_linewidth( kwargs['lw']) 
+        finally:
+            print( 'wrong format of linewidth specified, returns to the default') 
+    return legend
+
+
+def export_legend( legend, savefile='./legend.pdf', expand=[-2,-2,2,2]):
+    """
+    export a standalone legend which didn't fit on the original image
+    The legend should be extracted by firstly plotting the legend and then 
+    passing it to this function., e.g.
+    Example call:
+    axes[1].grid( 'off') #removes background in opacity
+    legend = plot.add_legend( axes[1] )
+    plot.export_legend( legend, savepath + legend_savename)
+    legend.remove() 
+    axes[1].grid()
+    Parameters:
+    -----------
+    legend:         matplotlib.legend.Legend object, or ax object
+                    object which contains either a predefined legend, or ax
+                    which will generate the legend using "add_legend function"
+    savefile:       str, default './legend.pdf'
+                    path and name of file to save to
+    expand:         list of 4 floats
+                    i think it has something todo with the size
+    Returns:
+    --------
+    None:           only saves the legend to savefile 
+    """
+    temp_legend = False
+    if not isinstance( legend, matplotlib.legend.Legend):
+        ax = legend
+        ylim = ax.get_ylim()[1]
+        xlim = ax.get_xlim()[1]
+        ax.set_ylim( ymax=1e10 )
+        ax.set_xlim( xmax=1e10 )
+        ax.grid( False)
+        legend = add_legend( ax)
+        temp_legend = True 
+    ## get the figure for the legend
+    fig = legend.figure
+    fig.canvas.draw()
+    bbox = legend.get_window_extent()
+    bbox = bbox.from_extents( *( bbox.extents + np.array(expand)))
+    bbox = bbox.transformed( fig.dpi_scale_trans.inverted()) 
+    fig.savefig(savefile, dpi="figure", bbox_inches=bbox) 
+    if temp_legend:
+        ax.grid()
+        legend.remove()
+        ax.set_ylim( ymax=ylim)
+        ax.set_xlim( xmax=xlim)
+
+
+def export_borderless( image, savename, file_ending='.pdf', cmap=None, size=None, clim=None, cbar=False):
+    """
+    Export a single matrix (from imshow) as borderless image
+    and save it to <savename+file_ending>. Intended to be used for RVEs
+    Parameters:
+    -----------
+    image:      numpy 2d-array
+                image data which should be plotted
+    savename:   str
+                path to file, if file ending is given here the next parameter
+                will be ignored
+    file_ending:str, default '.pdf'
+                file format of the plot
+    cmap:       str, default None
+                if the cmap is not specified, default to gray with a custom colorrange
+    size:       tuple of 2 ints, default None
+                size of the figure in inches (in matplotlib)
+    clim:       tuple of 2 ints, default None
+                specified cmap range, always takes [0,1.2] if the colormap is 'gray'
+    cbar:       bool, default False
+                if the colorbar should be exported as well
+    Returns:
+    --------
+    None:       saves to file
+    """
+    if size:
+        fig, ax = plt.subplots( figsize=size)
+    else: 
+        fig, ax = plt.subplots()
+    if not '.' in savename:
+        savename += file_ending
+    if cmap is None:
+        clim = [0, 1.2]
+        cmap = 'gray' 
+    img = ax.imshow( image, cmap=cmap)
+    if clim is not None:
+        img.set_clim( *clim )
+    if cbar is True:
+        plt.colorbar( img, ax=ax)
+    ax.axis('off')
+    fig.savefig( savename, bbox_inches='tight', pad_inches=0 )
+    plt.close()
+    return
+
+
+#### OTHER DECORATING FUNCTIONS FOR CONVENIENCE ####
+
 
 
 def set_titles( axes, *titles, **kwargs ):
@@ -203,7 +435,6 @@ def set_titles( axes, *titles, **kwargs ):
                 multiple strings for the titles, should be as many titles as there are axes handles given
     **kwargs:   dict
                 formatting kwargs for the title                
-
     Returns:
     --------
     axes:       plt.axes object or np.ndarray of axes objects
@@ -224,107 +455,6 @@ def set_titles( axes, *titles, **kwargs ):
             print( "################### WARNING #####################\n title for single axes object could not be set, returning axes with no title added" )
     return axes
 
-
-
-def add_legend( ax, position='top right', opacity=0.8, **kwargs):
-    """
-    Add a legend to the specified ax object. Kwargs do overwrite parameters in plt.rcParams
-    Parameters:
-    -----------
-    ax:         plt.axes object
-                axes in which the legend should be added
-
-    position:   string, default 'top right'
-                set the legend in a specified corner ( 'top/upper or bot/lower left/right', has a space in the string
-                A dictionary is also accepted, should contain the keys to specify the position
-                (prefered is 'loc' and 'bbox_to_anchor')
-    opacity.    float, default 0.8
-                opacity of the legend box
-    **kwargs    unpacked dictionary
-                additional parameters to customize the legend, e.g.
-                linewidth or lw
-                handlelength, handletextpad, labelspacing
-                edgecolor, facecolor, fancybox, shadow
-    """
-    defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
-                      fancybox=False, #shadow=True,  #shadow and opacity dont mix well
-                      edgecolor=uniS.blue, facecolor=uniS.gray80, framealpha=opacity ) 
-    if isinstance( position, str):
-        position = position.replace( '_', ' ' )
-        if position == 'bot left' or position=='lower left':
-            defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
-        elif position == 'top left' or position=='upper left':
-            defaults.update( dict( loc='upper left', bbox_to_anchor=(-0.01,1.015) ) )
-        elif position == 'top right' or position=='upper right':
-            defaults.update( dict( loc='upper right', bbox_to_anchor=(1.005, 1.015) )  )
-        elif position == 'bot right' or position=='lower right':
-            defaults.update( dict( loc='lower right', bbox_to_anchor=(1.005, -0.010) )  )
-    elif isinstance( position, dict):
-        defaults.update( position)
-    else:
-        print( "Non allowed argument for 'position' in 'add_legend', setting default (top right) ")
-        defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
-
-    style= {**defaults, **kwargs} #overwrites the defaults by the kwargs
-    key = ax.legend(**style)
-    key.get_frame().set_linewidth( 1.0) 
-    if 'linewidth' in kwargs or 'lw' in kwargs:
-        try: 
-            key.get_frame().set_linewidth( kwargs['linewidth']) 
-        except:
-            key.get_frame().set_linewidth( kwargs['lw']) 
-        finally:
-            print( 'wrong format of linewidth specified, returns to the default') 
-    return ax
-
-
-def axis_labels( ax, xlabel, ylabel, **kwargs):
-    """
-    Set the x and y label for a given ax object
-    Parameters:
-    -----------
-    ax:         plt.axes object
-                axes handle of the current plot
-    xlabel:     string
-                xlabel to set
-    ylabel:     string
-                ylabel to set
-    **kwargs:   unpacked dict
-                kwargs passed to ax.set_?label( **kwargs)
-    Returns:
-    --------
-    ax          plt.axes object
-                axes handle with the added labels
-    """
-    ax.set_xlabel(xlabel, **kwargs)
-    ax.set_ylabel(ylabel, **kwargs)
-    return ax
-
-
-
-
-
-def export_legend( legend_handles, savefile='./legend.pdf'):
-    """
-    export a standalone legend which didn't fit on the original image
-    The legend handles can be given by ax.get_legend_handles_labels()
-    Parameters:
-    -----------
-    legend_handles: tuple of legend handles
-                    found handles in the ax object
-    savefile:       str, default './legend.pdf'
-                    path and name of file to save to
-    Returns:
-    --------
-    None:           only saves the legend to savefile
-
-    """
-    #fig_leg = plt.figure()
-    #ax_leg = fig_leg.add_subplot(111)
-    fig, ax = plt.subplots()
-    ax.legend( *legend_handles, loc='center')
-    ax.axis('off')
-    fig.savefig( savefile, bbox_inches='tight')
 
 
 def bounding_lines(ax, horizontal=True, minval=0, maxval=1):
@@ -384,14 +514,21 @@ def imshow_with_colorbar( ax, image, OPT='ARGS'):
     # TODO IMPLEMENT THIS FUNCTION
 
 
-#shadows of rc_default function to ommit typos
+#### ALIAS/SHADOWS OF FUNCTIONS TO CATCH TYPOS ####
 # alias of different functions
 def rc_defaults( *args, **kwargs):
+    """ see rc_default """
     return rc_default( *args, **kwargs)
 def rcDefaults( *args, **kwargs):
+    """ see rc_default """
     return rc_default( *args, **kwargs)
 def rcDefault( *args, **kwargs):
-    return rc_default( *args, **kwargs)
+    """ see rc_default """
+    return rc_default( *args, **kwargs) 
 
 def save_legend( *args, **kwargs):
+    """ see export_legend """
     return export_legend( *args, **kwargs) 
+def export_single( *args, **kwargs):
+    """ see export_borderless """
+    return export_borderless( *args, **kwargs)
