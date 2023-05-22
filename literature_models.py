@@ -152,6 +152,30 @@ class InceptionNet( VolBypass):
             side_predictor.freeze( freeze )
 
 
+class InceptionResV2( VolBypass):
+    def __init__( self, n_out=3, n_vol=None, *args, **kwargs):
+        """
+        quick and dirty implementation of the inception v2 net + bypass
+        """
+        super().__init__( n_out, *args, **kwargs)
+        self.model = tf.keras.applications.InceptionResNetV2( include_top=False, weights=None,
+                input_shape=(400,400,1) )
+        self.dense = LayerWrapper()
+        self.dense.append( GlobalAveragePooling2D() )
+        self.dense.append( Dense( n_out, activation=None) )
+
+    def freeze_literature( self, freeze=False):
+        self.model.trainable = not freeze
+        self.dense.freeze( freeze)
+
+    def call( self, images, features, training=False):
+        prediction = self.model( images, training=training)
+        prediction = self.dense( prediction, training=training)
+        if self.vol_enabled:
+          prediction += self.predict_vol( features, training=training)
+        return prediction #return full prediction
+
+
 
 
 
