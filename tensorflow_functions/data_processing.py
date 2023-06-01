@@ -107,6 +107,8 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     'covariance_shift': scale by 
     '0,1': scale each component to lie on the interval [0,1]
     '-1,1': scale each component to lie on the interval [-1,1]
+    alternatively one can give a list of two floats, and then the data
+    will be scaled to that range
     'invert'/'inv': just change the sign of it
     Parameters:
     -----------
@@ -136,6 +138,11 @@ def scale_data( data, slave_data=None, scaletype='single_std1'):
     scaling = [None,None, scaletype]
     if scaling[2] is None:
         pass
+    elif not isinstance( scaling[2], str ) and hasattr( scaling[2], '__iter__'):  #list of floats
+        scaling[0] = np.min( data, axis=axis)
+        data       = data - scaling[0]
+        scaling[1] = np.max( data, axis=axis) * 1/ (scaling[2][1]-scaling[2][0]) #i htink
+        data       = data /scaling[1] + scaling[2][0]
     elif scaling[2].lower() in [ 'default', 'single_std1'] :
         scaling[0] = np.mean( data, axis=axis)
         data       = data - scaling[0]
@@ -196,6 +203,11 @@ def scale_with_shifts( data, scaling):
     """
     if scaling[2] is None:
         pass
+    elif not isinstance( scaling[2], str ) and hasattr( scaling[2], '__iter__'):  #list of floats
+        scaling[0] = np.min( data, axis=axis)
+        data       = data - scaling[0]
+        scaling[1] = np.max( data, axis=axis) * 1/ (scaling[2][1]-scaling[2][0]) #i htink
+        data       = data /scaling[1] + scaling[2][0]
     elif scaling[2] in [ 'single_std1', 'combined_std1', 'default']:
         data = scaling[1] * ( data - scaling[0] ) 
     elif  'cov' in scaling[2].lower():
@@ -227,6 +239,13 @@ def unscale_data( data, scaling ):
     """
     if scaling[2] is None:
         pass
+    elif not isinstance( scaling[2], str ) and hasattr( scaling[2], '__iter__'):  #list of floats
+        data = (data - scaling[2][0]) * scaling[1]
+        data = data + scaling[0]
+        #scaling[0] = np.min( data, axis=axis)
+        #data       = data - scaling[0]
+        #scaling[1] = np.max( data, axis=axis) * 1/ (scaling[2][1]-scaling[2][0]) #i htink
+        #data       = data /scaling[1] + scaling[2][0]
     elif scaling[2] in [ 'single_std1', 'combined_std1']:
         data = data / scaling[1] + scaling[0] 
     elif  'cov' in scaling[2].lower():
