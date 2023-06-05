@@ -11,26 +11,35 @@ from my_models import Model
 
 ##################### Convolutional Neural Networks ##################### 
 class ModularInception( VolBypass): 
-  def __init__( self, n_output, n_channels=64, dense=[50,32,16], module_kwargs=dict(), *args, **kwargs):
+  def __init__( self, n_output, n_channels=64, dense=[50,32,16], scale_images=False, module_kwargs=dict(), *args, **kwargs):
       """
       Build a very modal deep inception model which takes 2 (new) modular
       deep inception block in a consecutive manner and has a dense block
       thereafter
       Parameters:
       -----------
-      n_output:     int
-                    number of neurons to predict
-      n_channels:   int, default 32
-                    number of output channels per deep inception module
-                    scales with $n$ for the $n$-th deep inception block
-      dense:        list of ints, default [32,32,16,16]
-                    basically number of neurons in the dense part, always
-                    uses selu and batch normalization 
+      n_output:         int
+                        number of neurons to predict
+      n_channels:       int, default 32
+                        number of output channels per deep inception module
+                        scales with $n$ for the $n$-th deep inception block
+      dense:            list of ints, default [32,32,16,16]
+                        basically number of neurons in the dense part, always
+                        uses selu and batch normalization 
+      scale_images:    bool, default False
+                        switch for the variable phase contrast model if the
+                        phase contrast should be added per neuron in SNE, or 
+                        if the input image should be scaled by the phase contrast
+      module_kwargs:    dict, default dict( n_channel1=[0,n_channels], n_channel2=n_channels)
+                        kwargs to pass into both deep inception modules on invocation
       """
+      ## input preprocessing
       module_kwargs = module_kwargs.copy()
       n_channel1 = module_kwargs.pop( 'n_channel1', [0, n_channels] )
       n_channel2 = module_kwargs.pop( 'n_channel2', n_channels )
+      self.scale_images = scale_images #variable phase contrast implementation
 
+      ##  Definition of model
       super().__init__( n_output, *args, **kwargs)
       self.conv =  [DeepInception( n_channels=n_channel1, **module_kwargs), 
                     DeepInception( n_channels=n_channel2, pooling='max', **module_kwargs)  ]
@@ -69,7 +78,11 @@ class ModularInception( VolBypass):
                 flag to inform the model wheter its currently training
       """
       if x_extra is None and self.vol_slice.stop == 2:
-          x_extra = tf.reshape( features[:,1], (-1,1) ) 
+          phase_contrast = features[:,1]
+          if self.scale_images: #scale input images
+              images *= tf.reshape( phase_contrast, (-1, 1,1,1))
+          else: #add the  phase contrast in each SnE block
+              x_extra = tf.reshape( phase_contrast, (-1,1)) 
       for layer in self.conv:
           images = layer( images, x_extra=x_extra, training=training)
       images = self.feature_concatenator( images, training=training)
