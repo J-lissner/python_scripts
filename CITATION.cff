@@ -4,7 +4,7 @@ authors:
 - family-names: "Lißner"
   given-names: "Julian"
   orcid: "https://orcid.org/0000-0002-2286-5211"
-title: "TensorFlow models, plotting templates and python utilities"
+title: "Python utilities: TensorFlow, plotting, data loaders"
 version: 3.2.10
 date-released: 2023-06-01
 url: "https://github.com/J-lissner/python_scripts"
