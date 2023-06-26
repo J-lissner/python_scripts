@@ -500,7 +500,7 @@ class VVEnet( SlimNet):
       load_kwargs = pickle.load( open( load_path + 'model_state.pkl', 'rb' ) )
       self.full_predictor = not load_kwargs['full_predictor']
       self.replace_predictor()
-      self.enable_doble( load_kwargs['enabled'] )
+      self.enable_double( load_kwargs['enabled'] )
       
 
   def high_level_prediction( self, images, training=False):
