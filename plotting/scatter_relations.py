@@ -166,6 +166,75 @@ def voigt_reuss_bounds( kappa_1, kappa_2, volmin=0, volmax=1):
     upper = 1/( (1-vol)/kappa_1+vol/kappa_2)
     return vol, lower, upper
 
+def voigt_reuss_mech( e_moduli, poisson_ratio, volmin=0, volmax=1, inspected='bulk'):
+    """
+    return the lower or upper hashin shtrikmann bounds for the given
+    input parameters e_moduli. Creates its own discrete sample space for
+    the volume fraction on which it is defined
+    Paramteres:
+    -----------
+    e_moduli:       list of two floats
+                    E-moduli parameters of matrix, inclusion phase
+    possin_ratio:   list of two floats
+                    poisson ratio parameters of matrix, inclusion phase
+    volmin:         float, default 0.
+                    minimum volume fraction to consider
+    volmax:         float, default 1.
+                    maximum volume fraction to consider
+    inspected:      str, default 'bulk'
+                    which resposnse to consider given 11 loading
+                    defaults to 'bulk', otherwise its 'shear'
+    Returns:
+    --------
+    vol_virt:   1d-np.array
+                sampled volume fraction where lower and upper are defined
+    lower:      1d-np.array
+                lower hashin-shtrikmann bound 
+    upper:      1d-np.array
+                upper hashin-shtrikmann bound 
+    Example:
+    vol_virt, lower, upper = hashin_shtrikman_bounds( 0.2, 1)
+    plt.plot( vol_virt, lower)
+    plt.plot( vol_virt, upper)
+    """
+    n=500
+    vol = np.arange( volmin, volmax + (volmax-volmin)/n, (volmax-volmin)/n )
+    e_moduli = np.array( e_moduli ) 
+    poisson_ratio = np.array( poisson_ratio ) 
+    bulk_modulus = e_moduli / (3*(1-2*poisson_ratio) )
+    shear_modulus = e_moduli / (2*(1+poisson_ratio) )
+    if inspected == 'bulk':
+        max_k = max( e_moduli)
+        min_k = min( e_moduli)
+        moduli = e_moduli
+        #moduli = bulk_modulus
+    else:
+        max_k = max( poisson_ratio) 
+        min_k = min( poisson_ratio) 
+        moduli = poisson_ratio 
+        #moduli = shear_modulus
+    lambd  = (e_moduli*poisson_ratio)/((1+poisson_ratio)*(1-(2*poisson_ratio)))
+    mu      = e_moduli/(2*(1+poisson_ratio))
+    tl_ones = np.ones( (3,3))
+    tl_ones[:,-1] =0
+    tl_ones[-1] = 0 
+    moduli = []
+    for i in range( 2): 
+        CC = 2*mu[i] * np.eye(3) + lambd[i]  * tl_ones
+        moduli.append( CC )
+    ## computation for bulk/shear modulus, simply take the corresponding values
+    #upper = 1/( vol/( max_k+ moduli[1] ) + (1- vol)/(max_k + moduli[0] ) ) - max_k
+    #lower = 1/( vol/( min_k+ moduli[1] ) + (1- vol)/(min_k + moduli[0] ) ) - min_k
+    #lower = (1-vol)*moduli[0]+vol*moduli[1]
+    #upper = 1/( (1-vol)/moduli[0]+vol/moduli[1])
+    lower = []
+    upper = []
+    for i,j in [(0,0), (1,1), (1,2), (2,2), (0,2), (1,2) ]:
+        lower.append(      (1-vol)*moduli[0][i,j]+vol*moduli[1][i,j] )
+        upper.append(  1/( (1-vol)/moduli[0][i,j]+vol/moduli[1][i,j]) )
+    return vol, lower, upper
+
+
 
 
 def correlation_matrix( ax, features, targets=None, threshold=None, rearrange=False):
