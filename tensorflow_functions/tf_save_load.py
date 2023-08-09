@@ -463,7 +463,7 @@ class PartialArchitecture( Loader):
         return model
 
 
-def find_best(  logfile, shared_names=True):
+def find_best(  logfile, shared_names=True, criteria='valid', return_value='name'):
   """
   Find the best model out of multiple models trained for the same output file
   Only works for the current console output of the training where we have
@@ -479,24 +479,36 @@ def find_best(  logfile, shared_names=True):
                 string to the log file with the specific formatting
   shared_names: bool, default True
                 if all models share the same base name, if not they are given for each model
+  criteria:     str, default 'valid'
+                from which criteria the best model number should be returned. Returns the 
+                full path to file of the model's folder. Choose between 'valid', 'train'
+                and 'combined', where the latter is the sum of both
+  return_value: str, default 'name'
+                which value to return, if the default is chosen then it returns the
+                path to the best model. Otherwise an integer of 0-2 should be chosen
+                which returns each metric, 0 for train loss, 1 for val loss,
+                2 for rel root MSE
   Returns:
   --------
-  best_model: list of ints
-              numbering of the best model w.r.t. the above criteria, also prints to console
+  best_model:   list of ints
+                numbering of the best model w.r.t. the above criteria, also prints to console
+  error_metric: list of floats
+                value of each training in the selected error metric
   """ 
   if logfile[-4:] != '.log':
     try:
-        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile + '.log'), shell=True, stdout=subprocess.PIPE)
+        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile + '.log'), shell=True, stdout=subprocess.PIPE)
     except:
-        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
   else: 
-        finished_trainings = subprocess.Popen(  'grep -B 7 "corresponding" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
   x = str( finished_trainings.communicate()[0]) #console output from bytes to single string
-  y = x.split( '\\r' )
-  interval = 8 #number of lines left after popping lines
+  y = x.split( '\\n' )
+  interval = 7 #number of lines left after popping lines
   model_basename = None if shared_names else []
   valid_losses = []
   train_losses = []
+  rel_metric = []
   model_nr = []
   isnumber = [str(x) for x in range(10) ] + list( range(10) )
   for j in range( len( y) ):
@@ -513,10 +525,21 @@ def find_best(  logfile, shared_names=True):
           break
       model_nr.append( int( nr) )
       #model_nr.append( int( re.search( '.*[0-9]*', y[j]).group()[:-7] ) )
-    elif (j-6) % interval == 0:
-      valid_losses.append( float( y[j].split( '\\t')[-1].replace( ',','') ) ) 
-    elif (j-7) % interval == 0:
-      train_losses.append( float( y[j].split( '\\t')[-1].replace( ',','') ) ) 
+    elif (j-3) % interval == 0:
+        valid_loss =  y[j].split( ':')[-1].replace( ',','') 
+        valid_loss = valid_loss.replace( '\\r', '') #remove potential new line character
+        valid_loss = valid_loss.split( '(')[-1].replace( ')', '' )
+        valid_losses.append( float( valid_loss) ) 
+    elif (j-4) % interval == 0:
+        train_loss =  y[j].split( ':')[-1].replace( ',','')                                         
+        train_loss = train_loss.replace( '\\r', '') #remove potential new line character            
+        train_losses.append( float( train_loss) )  
+    elif (j-5) % interval == 0:
+        relative_error = y[j].split( ':')[-1].replace( ',','')  
+        relative_error = relative_error.split( '(')[-1].split( ')')[0]
+        relative_error = relative_error.replace( '\\r', '') #remove potential new line character
+        relative_error = relative_error.replace( '\\\\%', '') #remove potential new line character
+        rel_metric.append( float( relative_error) ) 
   combined_losses = [x+y for x,y in zip(valid_losses,train_losses) ]
   best_models = [ valid_losses.index( min(valid_losses)) ]
   best_models.append( combined_losses.index( min(combined_losses)) )
@@ -526,16 +549,19 @@ def find_best(  logfile, shared_names=True):
         criteria valid loss, model_nr: {}
               valid_loss: {:.4e}
               train_loss: {:.4e}
+              rel_metric: {:.3f} [%]
         criteria sum losses, model_nr: {}
               valid_loss: {:.4e}
               train_loss: {:.4e}
+              rel_metric: {:.3f} [%]
         criteria train loss, model_nr: {}
               valid_loss: {:.4e}
               train_loss: {:.4e}
+              rel_metric: {:.3f} [%]
     Model basename: {:}""" 
-      print( stoud.format( model_nr[-1]+1, model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
-                           model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
-                           model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]], model_basename ) )
+      print( stoud.format( model_nr[-1]+1, model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]], rel_metric[best_models[0]],
+                           model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], rel_metric[best_models[1]],
+                           model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]], rel_metric[best_models[2]], model_basename ) )
   else:
       stoud = """Best models with respect to the given criteria are
         criteria valid loss, model {} nr {}:
@@ -547,7 +573,16 @@ def find_best(  logfile, shared_names=True):
         criteria train loss, model {} nr {}:
               valid_loss: {:.4e}
               train_loss: {:.4e}"""
-      print( stoud.format( model_basename[best_models[0]], model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]],
-                           model_basename[best_models[1]], model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], 
-                           model_basename[best_models[2]], model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]] ) )
-  return [ model_nr[x] for x in best_models] 
+      print( stoud.format( model_basename[best_models[0]], model_nr[best_models[0]], valid_losses[ best_models[0]], train_losses[best_models[0]], rel_metric[best_models[0]],
+                           model_basename[best_models[1]], model_nr[best_models[1]], valid_losses[ best_models[1]], train_losses[best_models[1]], rel_metric[best_models[1]],
+                           model_basename[best_models[2]], model_nr[best_models[2]], valid_losses[ best_models[2]], train_losses[best_models[2]], rel_metric[best_models[2]] ) )
+  if criteria == 'valid':
+      best_model = best_models[0]
+  elif criteria == 'combined':
+      best_model = best_models[1]
+  elif criteria == 'train':
+      best_model = best_models[2] 
+  if isinstance( return_value, str) and return_value == 'name':
+    return model_basename + str( best_model )  
+  metrics = [valid_losses, train_losses, rel_metric]
+  return metrics[ return_value]
