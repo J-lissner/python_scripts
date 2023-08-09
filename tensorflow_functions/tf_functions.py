@@ -116,6 +116,19 @@ def roll_images( data, part=0.5):
 
 
 ## generally usable functions 
+def n_trainable( model):
+    """
+    simply count the number of trainable parameters in a model
+    Parameters:
+    -----------
+    model:      tensorflow.keras.Model
+                (custom) model class of a keras inhereted model
+    Returns:
+    --------
+    n_params:   int
+                total number of trainable parameters
+    """
+    return sum([np.prod( x.shape) for x in model.trainable_variables])
 def train_model( model, data, valid_data, savepath=None, best_loss=1, call=None, image_idx=None, *call_args, **call_kwargs):
     """
     fully train the passed model to convergence with all the default
