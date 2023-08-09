@@ -91,6 +91,8 @@ def rc_default( fontsize=11.7, ticksize=9, legend_fontsize=10.2, \
     ## default color palette to be uniStuttgart colors (cycles for line AND scatterplot
     default_params.update( {'axes.prop_cycle': plt.cycler('color', uniS.colorwheel) } ) 
     default_params.update( **kwargs)  #overwrite any setting by the specified kwargs
+    ### default latex packages
+    default_params.update( {'text.latex.preamble': r'\usepackage{amsfonts,amsmath,amssymb}' } )
     return default_params
 
 
@@ -194,7 +196,7 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, padding=[0,0], **
         for j in range( n_column):
             axes[i,j].set_position( ax_position[-(i+1),j] )
             axes[i,j].set( xlabel='x', ylabel='f(x)' )
-    print( 'Size of the full figure:', round(required_width*cm_conversion,3), 'x', round( required_height*cm_conversion, 3), f'[cm]; {round( required_width,3)}{round( required_height,3)} [in]' )
+    print( 'Size of the full figure:', round(required_width*cm_conversion,3), '/', round( required_height*cm_conversion, 3), f'[cm]; {round( required_width,3)}/{round( required_height,3)} [in]' )
     if n_column == 1 and n_row == 1:
         return fig, axes[0][0]
     else:
@@ -274,7 +276,7 @@ class HandlerColormap(HandlerBase):
 
 
 
-def add_legend( ax, position='top right', opacity=0.8, **kwargs):
+def add_legend( ax, *legend_args, position='top right', opacity=0.8, **kwargs):
     """
     Add a legend to the specified ax object. Kwargs do overwrite parameters in plt.rcParams
     Parameters:
@@ -315,7 +317,7 @@ def add_legend( ax, position='top right', opacity=0.8, **kwargs):
         defaults.update( dict( loc='lower left', bbox_to_anchor=(-0.01,-0.010) ) )
 
     style= {**defaults, **kwargs} #overwrites the defaults by the kwargs
-    legend = ax.legend(**style)
+    legend = ax.legend( *legend_args, **style)
     legend.get_frame().set_linewidth( 1.0) 
     if 'linewidth' in kwargs or 'lw' in kwargs:
         try: 
@@ -405,7 +407,7 @@ def export_borderless( image, savename, file_ending='.pdf', cmap=None, size=None
     else: 
         fig, ax = plt.subplots()
     if not '.' in savename:
-        savename += file_ending
+        savename = savename + file_ending
     if cmap is None:
         clim = [0, 1.2]
         cmap = 'gray' 

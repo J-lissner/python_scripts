@@ -14,11 +14,9 @@ class UniStuttgart:
     lightblue   = '#00beff'
     lblue       = '#00beff'
     magenta     = '#ec008d'
-    darkgreen   = '#00c832'
     green       = '#8dc63f'
     red         = '#ee1c25'
     yellow      = '#ffdd00'
-    day9yellow  = '#ffa71a'
     orange      = '#f36f23'
     grey        = '#323232'
     grey10      = '#ececed'
@@ -49,6 +47,16 @@ class UniStuttgart:
     lblue80     = '#33cbff'
     lblue60     = '#66d8ff'
     lblue40     = '#99e5ff'
+    ## frequently used non corporate design colors
+    barn_red    = '#750000'
+    ruby_red    = '#9b111e'
+    day9yellow  = '#ffa71a'
+    darkgreen   = '#00c832'
+    ### other colors I required once to have a backreference here
+    cyan        = '#04ffc5'
+    greenish    = '#04FF50'
+
+    
     
     colorwheel = [lblue, day9yellow, green, blue, magenta, gray30, red ]
     color_wheel = colorwheel
