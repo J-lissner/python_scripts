@@ -182,6 +182,7 @@ def fixed_plot( n_row=1, n_column=1, x_stretch=1, y_stretch=1, padding=[0,0], **
 
     ## setting of figure and axes object
     fig, axes = plt.subplots( n_row,n_column, **kwargs)
+    fig.savefig = savefig( fig )
     fig.canvas.draw()
     fig.set_constrained_layout(False)
     fig.set_size_inches( required_width, required_height)
@@ -210,12 +211,17 @@ class HandlerColormap(HandlerBase):
     Does have to be paired with a dummy mappable and the label is required
     to be added manually.
     It is advised to pair the 'cmap' parameter in the init with a custom
-    colormap, obtained as e.g.
-    from matplotlib.colors import LinearSegmentedColormap as Cmap
-    Cmap.from_list( "", [uniS.gray60, uniS.gray20, uniS.gray] ) ]
-    (full import path: matplotlib.colors.LinearSegmentedColormap)
+    colormap
     All of this is obtained by the 'get_legend_entries' method, which should
     be used as ax.legend( **HandlerColormap.get_legend_entries() )
+    ######### Example: ##########
+    from matplotlib.colors import LinearSegmentedColormap as Cmap
+    colors = [uniS.gray60, uniS.gray20, uniS.gray]
+    colormap = Cmap.from_list( "", colors ) ]
+    custom_label = plt_templates.HandlerColormap( colormap, label='text', n_stripes=len( colors))
+    plt_templates.add_legend( axes_object, **custom_label.get_legend_entries( axes_object) )
+    ## the axes_object ensures that previously added labels will not be discarded
+    ## read the further documentation to find more flexibility in the legend design
     """
     def __init__(self, cmap, label, n_stripes=3, **kwargs):
         """
@@ -264,7 +270,7 @@ class HandlerColormap(HandlerBase):
         """
         labels = []
         handles = []
-        labels +=  [self.label]
+        labels +=  [self.label] + [x.label for x in other_handlers]
         handles += [Rectangle(( 0,0), 1, 1) for _ in range( 1+len(other_handlers) )]
         if ax is not None:
             additional_labels = ax.get_legend_handles_labels()
@@ -295,7 +301,8 @@ def add_legend( ax, *legend_args, position='top right', opacity=0.8, **kwargs):
                 handlelength, handletextpad, labelspacing
                 edgecolor, facecolor, fancybox, shadow
     """
-    if not ax.get_legend_handles_labels()[1]:
+    if not ax.get_legend_handles_labels()[1] and not kwargs:
+        print( 'did not find any legend labels in plt_templates.add_legend(), returning...' )
         return #if there is nothing to put in the legend
     defaults =  dict( handlelength=1.8, handletextpad=0.4, labelspacing=0.5, 
                       fancybox=False, #shadow=True,  #shadow and opacity dont mix well
@@ -376,6 +383,20 @@ def export_legend( legend, savefile='./legend.pdf', expand=[-2,-2,2,2]):
         ax.set_ylim( ymax=ylim)
         ax.set_xlim( xmax=xlim)
 
+def savefig( fig, *args, **kwargs):
+    """
+    emulated wrapper function to extend the default behaviour of 
+    fig.savefig by printing out the path it saves to. To add this 
+    functionality do:
+    fig.savefig = plt_templates.savefig( fig)
+    """
+    _savefig = fig.savefig
+    def wrapper( *args, **kwargs):
+        print( f'saving figure to: {args[0]}' ) 
+        return _savefig( *args, **kwargs)
+    return wrapper
+
+
 
 def export_borderless( image, savename, file_ending='.pdf', cmap=None, size=None, clim=None, cbar=False):
     """
@@ -423,9 +444,6 @@ def export_borderless( image, savename, file_ending='.pdf', cmap=None, size=None
 
 
 #### OTHER DECORATING FUNCTIONS FOR CONVENIENCE ####
-
-
-
 def set_titles( axes, *titles, **kwargs ):
     """
     Set the title of multiple axes objects in one function call
@@ -534,3 +552,4 @@ def save_legend( *args, **kwargs):
 def export_single( *args, **kwargs):
     """ see export_borderless """
     return export_borderless( *args, **kwargs)
+
