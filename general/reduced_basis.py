@@ -164,7 +164,7 @@ class ReducedBasis():
 
     #####################################
     ### functionalities with return value 
-    def correlation_function( self, images, scale=True):
+    def correlation_function( self, images, scale=True, *args, **kwargs):
         """
         Compute the 2pcf of the flattened image arrays and (optional) scale
         them with the same scheme used for the reduced basis
@@ -235,8 +235,11 @@ class ReducedBasis():
         return self.B.T[:n_xi] @ pcf
 
     def mean_projection_error( self, pcf, n_xi=None):
-        data_norm = np.linalg.norm( pcf,'fro')**2
         xi = self.get_xi( pcf, n_xi=n_xi )
+        if pcf.ndim == 1:
+            pcf = pcf[None] 
+            xi = xi[None]#implying xi is a 1 vector too
+        data_norm = np.linalg.norm( pcf,'fro')**2 #just ad ann axis that it always goes through
         p_delta = (1.0- (np.linalg.norm( xi, 'fro')**2 / data_norm) )**0.5
         return p_delta
 
@@ -314,6 +317,8 @@ class ReducedBasis():
         additional input: 
         reorthogonalize - if a reorthogonalization is to be carried out with the "update_tracking_variables" call
         """
+        if reorthogonalize == True:
+            self.n_reortho.append( self.reorthogonalize_B() )
         for key, value in tracked.items():
             if key not in self.tracked_variables:
                 self.tracked_variables[key] = [value]
@@ -327,8 +332,6 @@ class ReducedBasis():
         self.pdelta_S_orig.append( pdelta )
         self.n_over.append( n_over )
         self.n_under.append( n_under )
-        if reorthogonalize == True:
-            self.n_reortho.append( self.reorthogonalize_B() )
         if printout:
             print( f'    Current size of basis {self.N_em[-1]} after {self.n_updates} updates, projection error {100*pdelta:2.3f}' )
             print( f'    discarded {self.n_under[-1]} snapshots in the last iteration, {sum(self.n_under)} total' )
@@ -349,60 +352,100 @@ class FourierBasis(ReducedBasis):
         #explicitely writing an init method seems better (using the super method)
         super().__init__( computation_method, *args, **kwargs)
         self.corner_indexing = slice( None)
+        self.is_shrunk = 0
 
     def corner_truncation( self, tol=0.01, inspected_mode=-1, shrink_basis=False):
         """ 
-        Truncate all eigenmodes of the Fourier basis to the same size 
-        governed by the error introduced in 'inspected_mode'
-        After finding the thresold, the truncation is applied to the basis,
-        such that it gets reduced. The basis is reweighted such that the 
-        product of the reduced coefficients does not change except for the
-        <tol> error introduced.
-        This is doable since the fft is symmetric
-        The function
+        Truncate all eigenmodes of the Fourier basis to the corners using
+        a constant size over all eigenmodes. The size is determined by the
+        error introduced in 'inspected_mode'.
+        If the method is called a second time with <shrink_basis=True>, the 
+        basis can be further shrunk while not introducing further errors 
+        using hermitian symmetries.  If that is conducted, the norm and 
+        orthonormality of the basis will not be ensured, though the 
+        behaviour on projection remains identical, but for a full
+        back-projection and norm computation the basis has to be
+        divided by a factor 2**0.5, except for the ndim*[0] frequency
         Parameters:
         -----------
         tol:            float, default 0.01
                         Maximum amount of "information" discarded
         inspected_mode: int, default -1
-                        assuming increasingly higher frequencies, higher modes
-                        require a larger corner
+                        which eigenmode to consider for Fourier truncation
+                        assuming increasingly higher frequencies, 
+                        higher modes require a larger corner
         shrink_basis:   bool, default False
                         whether or not to shrink the actual basis
         """
         if self.B.shape[1] < inspected_mode:
             inspected_mode = -1
-        reference_mode = self.B[:,inspected_mode].reshape( self.resolution)
         ndim = len( self.resolution )
-        info_last = np.linalg.norm( reference_mode, 'fro' )
-        for N_c in range( 1, min(self.resolution)//2 -1):
-            truncated_mode = reference_mode.copy().reshape( self.resolution)
-            for i in range( ndim ): #ndim basically
-                indexing = ndim*[slice(None)]
-                indexing[i] = slice( N_c +1, self.resolution[i]-N_c)
-                truncated_mode[ tuple( indexing) ] = 0
-            diff = np.linalg.norm( reference_mode, 'fro') - np.linalg.norm( truncated_mode, 'fro') 
-            #diff = np.linalg.norm( reference_mode - truncated_mode, 'fro')
-            rel_error = diff /info_last
-            if rel_error < tol:
-                break
-        self.N_c = N_c
+        if self.is_shrunk == 0:
+            reference_mode = self.B[:,inspected_mode].reshape( self.resolution)
+            info_last = np.linalg.norm( reference_mode, 'fro' )
+            for N_c in range( 1, min(self.resolution)//2 -1):
+                truncated_mode = reference_mode.copy().reshape( self.resolution)
+                for i in range( ndim ):  
+                    indexing = ndim*[slice(None)]
+                    #always consider 0 frequency for norm consideration
+                    indexing[i] = slice( N_c +1, self.resolution[i]-N_c) 
+                    truncated_mode[ tuple( indexing) ] = 0
+                diff = np.linalg.norm( reference_mode, 'fro') - np.linalg.norm( truncated_mode, 'fro') 
+                #diff = np.linalg.norm( reference_mode - truncated_mode, 'fro')
+                rel_error = diff /info_last
+                if rel_error < tol:
+                    break
+            self.N_c = N_c
+        ### post processing, apply the found corner size to the BR
         if not shrink_basis:
             truncated_mode = truncated_mode.flatten()
+            self.B[ truncated_mode == 0] = 0
             self.corner_indexing = truncated_mode != 0
-            self.B[self.corner_indexing] = 0
-        else: #shrink the basis to the reduced size
-            truncated_mode[ N_c+1:] = 0 #the rest is hermitian symmetric
+        elif self.is_shrunk == 0: #shrink the basis to the reduced size
             truncated_mode = truncated_mode.flatten()
             self.corner_indexing = truncated_mode != 0
-            self.B = 2*self.B[ self.corner_indexing] #multiply by 2 to account for symmetries
-            #rescale the 0th freqeuncy on all axis since this is not symmetrically copied
-            self.B[0] = self.B[0]/2 
+            self.B = self.B[ self.corner_indexing] 
+            self.is_shrunk = 1
+        ## was already shrunk to 4 corners, shrink further to 2 + symmetries
+        elif self.is_shrunk == 1: 
+            # basis is already shrunk to four corners and shall be
+            # shrinked to two
+            N_c = self.N_c
+            if self.B.shape[0] != (2*N_c+1)**2:
+                further_truncation = np.zeros( ndim*[2*N_c+1] ).flatten()
+                further_truncation[ 1:] = self.B[:,inspected_mode].copy()
+                further_truncation = further_truncation.reshape( ndim*[2*N_c + 1] )
+            else:
+                further_truncation = self.B[:,inspected_mode].reshape( ndim*[2*N_c + 1] ).copy()
+            full_truncation = np.ones( self.resolution )
+            further_truncation[ N_c+1:] = 0 #flipped parts
+            full_truncation[ N_c+1:] = 0 #flipped parts
+            corner_index = ndim*( slice(N_c+1, None),)
+            full_truncation[ corner_index] = full_truncation[ corner_index] #put it in the corner for the actual values
+            for i in range( ndim):
+                ## shrink to corners
+                indexing = ndim* [slice( None)]
+                indexing[i] = slice( N_c+1, -N_c )
+                full_truncation[ tuple(indexing)] = 0
+                ## filter out 0 frequencies
+                indexing = ndim*[slice( N_c+1, None ) ]
+                indexing[i] = 0
+                full_truncation[ tuple( indexing) ] = 0 #0 frequency on opposite side
+                further_truncation[ tuple( indexing) ] = 0 #0 frequency on opposite side
+            further_truncation = further_truncation.flatten() != 0 #applied to already small RB
+            self.corner_indexing = full_truncation.flatten() != 0 #from full resolution to compact
+            try:
+                self.B = 2*self.B[ further_truncation] 
+            except:
+                self.B = 2*self.B[ further_truncation[1:]] #0000 frequency was 0
+            self.B[0] /= 2
+            self.is_shrunk = 2
+
 
 
     #####################################
     ### functionalities with return value 
-    def correlation_function( self, images, scale=True):
+    def correlation_function( self, images, scale=True, shrink_pcf=False):
         """
         Compute the 2pcf of the flattened image arrays and (optional) scale
         them with the same scheme used for the reduced basis
@@ -420,11 +463,16 @@ class FourierBasis(ReducedBasis):
                     column wise arranged 2pcf in Fourier space
         """
         n_s = images.shape[-1]
-        pcf_four = np.zeros( images.shape, dtype=float )
+        if self.is_shrunk and shrink_pcf:
+            pcf_four = np.zeros( ( self.B.shape[0], n_s), dtype=float )
+        else:
+            pcf_four = np.zeros( images.shape, dtype=float )
         for i in range(n_s):
-            sample_pcf_four = fftn( images[:,i].reshape( self.resolution) )
+            sample_pcf_four = fftn( images[:,i].reshape( self.resolution) ).flatten()
+            if self.is_shrunk and shrink_pcf:
+                sample_pcf_four = sample_pcf_four[self.corner_indexing] 
             sample_pcf_four = np.conj(sample_pcf_four) * sample_pcf_four  #real up to roundoff errors
-            pcf_four[:,i] = sample_pcf_four.real.flatten()
+            pcf_four[:,i] = sample_pcf_four.real
         if scale:
             pcf_four = self.scale_snapshots( pcf_four)
         return pcf_four
@@ -461,14 +509,10 @@ class FourierBasis(ReducedBasis):
         """
         compute the reduced coefficients given the current basis
         """
-        if self.B.shape[0] == pcf.shape[0]:
-            return self.B[self.corner_indexing,:n_xi].T @ pcf[self.corner_indexing]
-        else: #basis is in reduced representation
-            try: #given full snapshots
-                return self.B.T[:n_xi] @ pcf[ self.corner_indexing]
-            except: #assume snapshots have been truncated accordingly
-                return self.B.T[:n_xi] @ pcf
-
+        try:
+            return self.B[:,:n_xi].T @ pcf #pcf and rb same size
+        except:
+            return self.B.T[:n_xi] @ pcf[ self.corner_indexing] #pcf has to be shrunk
 
     def initialize_tracking_variables( self):
         """
@@ -480,12 +524,12 @@ class FourierBasis(ReducedBasis):
         self.N_corner = []
 
 
-    def update_tracking_variables( self, *args, **kwargs):
-        """
-        see the parent method for reference, simply tracks also the
-        size in the Fourier truncation if that has been implemented
-        """
-        super().update_tracking_variables( *args, **kwargs)
-        if self.corner_indexing != slice( None):
-            nonzeros = round( np.sum( self.B[:,0].flatten() !=0) /4)**0.5
-            self.N_corner.append( nonzeros)
+    #def update_tracking_variables( self, *args, **kwargs):
+    #    """
+    #    see the parent method for reference, simply tracks also the
+    #    size in the Fourier truncation if that has been implemented
+    #    """
+    #    super().update_tracking_variables( *args, **kwargs)
+    #    if self.corner_indexing != slice( None):
+    #        nonzeros = round( np.sum( self.B[:,0].flatten() !=0) /4)**0.5
+    #        self.N_corner.append( nonzeros)
