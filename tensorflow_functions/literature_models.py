@@ -3,6 +3,7 @@ import numpy as np
 #from tensorflow.keras import Model 
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Concatenate, Layer, concatenate
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
+from tensorflow.keras.layers import Add
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic, LayerWrapper
 from literature_layers import UresnetDecoder, UresnetEncoder, MsPredictor #multilevel
 from literature_layers import ResBlock, ResxBlock, InceptionModule #constant resolution
@@ -13,7 +14,7 @@ from hybrid_models import VolBypass
 
 
 class ResNet( VolBypass):
-    def __init__( self, n_out, resx=False, sne=False, *args, **kwargs):
+    def __init__( self, n_out, resx=False, sne=False, concatenator=Add,  *args, **kwargs):
         """
         Build the resnet50 as it is in the literature,
         can also build the resXnet50, simply by setting the resx to true
@@ -26,6 +27,8 @@ class ResNet( VolBypass):
         sne:        bool, default False
                     if the squeeze and excite block should be added 
                     inside the res(x) block
+        concatenator: callable, default None
+                    concatenator of the resnet module, defaults to Add
         """
         kwargs.pop( 'n_vol', 1) #catch default argument
         super().__init__( n_out, *args, **kwargs )
@@ -41,11 +44,11 @@ class ResNet( VolBypass):
         for i in range( n_blocks):
             for j in range( len( n_channels[i]) ):
                 if i != 0 and j == 0:
-                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne) )
+                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne, concatenator=concatenator) )
                 elif i == 0 and j == 0:
-                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne, blowup=True) )
+                    self.architecture.append( layer( n_channels[i][j], strides=2, sne=sne, blowup=True, concatenator=concatenator) )
                 else:
-                    self.architecture.append( layer( n_channels[i][j], sne=sne) )
+                    self.architecture.append( layer( n_channels[i][j], sne=sne, concatenator=concatenator) )
         self.architecture.append( GlobalAveragePooling2D() )
         self.architecture.append( Dense( n_out) )
 

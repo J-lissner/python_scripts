@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras.activations import relu, selu
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Layer
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, Flatten, GlobalAveragePooling2D
-from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D, Concatenate
+from tensorflow.keras.layers import Conv2DTranspose, UpSampling2D, Concatenate, Add, Average
 from tensorflow_addons.layers import InstanceNormalization
 from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic, Conv2DTransposePeriodic
 from my_layers import SqueezeExcite, LayerWrapper
@@ -108,7 +108,7 @@ class ResBlock( Layer):
     (with one less 3x3 conv but 1x1 pre-post conv for dimensionality reduction)
     not the residual block with 2 3x3 conv
     """
-    def __init__( self, n_out, strides=1, sne=False, blowup=False, *args, **kwargs):
+    def __init__( self, n_out, strides=1, sne=False, blowup=False, concatenator=Add, *args, **kwargs):
         """
         Parameters:
         -----------
@@ -123,7 +123,8 @@ class ResBlock( Layer):
                         for first res block)
         """
         super().__init__( *args, **kwargs)
-        n_channels = n_out //4
+        n_channels = n_out // 4
+        self.concatenator = concatenator()
         self.block = LayerWrapper()
         self.block.append( Conv2D( n_channels, kernel_size=1, strides=strides ) )
         self.block.append( BatchNormalization( ) )
@@ -144,7 +145,7 @@ class ResBlock( Layer):
 
 
     def __call__( self, images, *args, training=False, **kwargs):
-        images = self.block( images, training=training) + self.bypass( images, training=training)
+        images = self.concatenator( [self.block( images, training=training), self.bypass( images, training=training)] )
         return self.relu( images)
 
 
