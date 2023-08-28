@@ -4,12 +4,89 @@ import itertools
 from tensorflow.math import ceil
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.layers import Conv2D, MaxPool2D, AveragePooling2D, GlobalAveragePooling2D
-from tensorflow.keras.layers import concatenate, Flatten, Concatenate
-from my_layers import InceptionModule, DeepInception, LayerWrapper, Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from tensorflow.keras.layers import concatenate, Flatten, Concatenate, Add
+from my_layers import Conv2DPeriodic, AvgPool2DPeriodic, MaxPool2DPeriodic
+from my_layers import InceptionModule, DeepInception, LayerWrapper, ModularizedDeep
 from hybrid_models import VolBypass, FeaturePredictor
 from my_models import Model
 
 ##################### Convolutional Neural Networks ##################### 
+class ModularInceptionII( VolBypass):
+    def __init__( self, n_output, pooling=8, n_conv=8, downsampling=64, bypass=False, dense=[50,32,16], *args, **kwargs):
+        super().__init__( n_output, *args, **kwargs)
+        n_modules = 0
+        while downsampling > 1:
+            n_modules += 1
+            downsampling /= pooling
+        input_bypass = False
+        if bypass:
+            input_bypass = Concatenate
+            bypass = Add if bypass is True else bypass #if its already a layer dont overwrite
+        #first layer should have fewer channels
+        n_channels = [ [pooling, min(4*pooling, 64)] ] #linear scaling for first and second layer 
+        n_channels.append( [min(4*pooling, 64), 96] ) #depending on pooling not to overflow memory
+        n_channels.extend( (n_modules-2)*[96] ) #96 for any deeper layer
+        self.conv = [ ModularizedDeep( pooling=pooling, n_conv=n_conv, n_channels=n_channels[0], bypass=input_bypass, pool_type='avg' )]
+        for i in range( 1, n_modules):
+            self.conv.append( ModularizedDeep( pooling=pooling, n_conv=n_conv, n_channels=n_channels[i], bypass=bypass, pool_type='max' ) )
+        self.feature_concatenator= Flatten()
+
+        self.dense = LayerWrapper()
+        for n_neuron in dense:
+            self.dense.append( Dense( n_neuron, activation='selu') )
+            self.dense.append( BatchNormalization() )
+        self.dense.append( Dense( n_output, activation=None) ) 
+
+    def freeze_main( self, freeze=True):
+       """
+       freeze the entire thing, required for inheritance later
+       """
+       for layer in self.conv:
+           try: layer.freeze( freeze) #its a layer wrapper
+           except: pass #its flatten etc.
+       self.dense.freeze( freeze)
+
+    def predict_conv( self, images, features=None, x_extra=None, training=False):
+        """
+        Evaluate the main contribution of this class for the prediction, 
+        i.e. the deep inception modules and yield the final prediction
+        Parameters:
+        -----------
+        images:   tensorflow.tensor
+                  image data of 4 channels, required for the prediction
+        x_extra:      tensorflow.tensor
+                      feature vector to append to the dense model
+        training: bool, default False
+                  flag to inform the model wheter its currently training
+        """
+        if x_extra is None and self.vol_slice.stop == 2:
+            phase_contrast = features[:,1]
+            if self.scale_images: #scale input images
+                images *= tf.reshape( phase_contrast, (-1, 1,1,1))
+            else: #add the  phase contrast in each SnE block
+                x_extra = tf.reshape( phase_contrast, (-1,1)) 
+        for layer in self.conv:
+            images = layer( images, x_extra=x_extra, training=training)
+        images = self.feature_concatenator( images)
+        return self.dense( images, training=training)
+
+    def call( self, images, x=None, x_extra=None, training=False):
+        """ 
+        Parameters:
+        -----------
+        images:       tensorflow.tensor
+                      image data of 4 channels required for the prediction
+        x:            tensorflow.tensor
+                      features required for the volume fraction bypass if enabled 
+        x_extra:      tensorflow.tensor
+                      feature vector to append to the dense model
+        """
+        prediction = self.predict_conv( images, x, x_extra, training=training)
+        if self.vol_enabled:
+            prediction += self.predict_vol( x, training=training) 
+        return prediction
+
+
 class ModularInception( VolBypass): 
   def __init__( self, n_output, n_channels=64, dense=[50,32,16], scale_images=False, module_kwargs=dict(), *args, **kwargs):
       """

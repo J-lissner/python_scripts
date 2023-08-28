@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPool2D
 from tensorflow.keras.layers import Conv2DTranspose, Layer
 from tensorflow.keras.layers import GlobalAveragePooling2D, GlobalMaxPool2D
-from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate 
+from tensorflow.keras.layers import BatchNormalization, Dense, Concatenate, concatenate, Add
 from tensorflow.python.ops import nn, nn_ops
 from tensorflow.python.trackable.data_structures import ListWrapper
 from math import ceil, floor
@@ -220,7 +220,7 @@ def pad_periodic( kernel_size, data):
                     the padded data by the minimum required width
     """
     ## for now i assume that on even sized kernels the result is in the top left
-    image_dim = data.ndim - 2 #n_smaples, n_channels
+    image_dim = len( data.shape) - 2 #n_smaples, n_channels
     if isinstance( kernel_size, int):
         kernel_size = image_dim*[kernel_size]
     for i in range( image_dim):
@@ -382,6 +382,120 @@ class DeepInception( Layer):
           prediction[-1] = self.normalizers[i]( prediction[-1], x_extra=x_extra, training=training)
       prediction = self.concatenator( prediction, training=training )
       return self.normalizers[-1]( prediction, x_extra=x_extra, training=training )
+
+
+class ModularizedDeep( Layer):
+    def __init__( self, n_conv=8, pooling=8, n_channels=64, bypass=False, pool_type='max', *args, **kwargs ):
+        """
+        Initialize a deep inception module with multiple branches of 
+        of different receptive field. The module is only implemented
+        for the following pooling values: 'pooling in [4,6,8,12,16]'
+        The higher the pooling, the more branches will be used
+        The number of branches is hardwired and linked to the pooling 
+        value
+        On channel unition, the channels are normalized with the 
+        'NormalizationLayer', and summed up. Thereafter they are
+        normalized again.
+        Deploys periodic padding in each layer
+        Parameters:
+        -----------
+        n_conv:     int, default 8
+                    maximum number of convolution operations
+        pooling:    int, default 8
+                    pooling factor of the module
+        n_channels: list of two ints, default [64,64]
+                    number of channels in the module, linearly scales
+                    from [a,b] in each branch, the last number is the
+                    number of output channels
+        bypass:     operation, default False
+                    if given, it is the unition operation (i.e. concat/add)
+                    of the bypass which uses 'pool_type' and the unition 
+                    passed after the bypass anotehr normalization layer 
+                    is conducted
+        pool_type:  str or tensorflow.keras.layer, default 'max'
+                    pool operation or type as string to preceede in each branch 
+        """
+        ##input preprocessing and alias allocation
+        super().__init__( *args, **kwargs)
+        n_channels = [n_channels] if not hasattr( n_channels, '__iter__') else list( n_channels)
+        n_channels = 2*n_channels if len( n_channels) == 1 else n_channels
+        conv = lambda i, pooling: Conv2DPeriodic( 
+                int(n_channels[0]+(i)/n_conv*(n_channels[1]-n_channels[0])), 
+                kernel_size=3, strides=pooling, activation='selu'  )
+        if isinstance( pool_type, str):
+            if 'avg' in pool_type.lower() or 'average' in pool_type.lower():
+                pool_operation = AvgPool2DPeriodic
+            else: #just default to maxpooling in any other case
+                pool_operation = MaxPool2DPeriodic
+        else:
+            pool_operation = pool_type
+        ## hardwired branches given the specified pooling
+        if pooling not in [4,6,8,12,16]:
+            raise ValueError( 'wrong parameter set for pooling in my_layers.ModularizedDeep')
+        if pooling == 4: ##hardwired factorization for each parameters
+            factorization = [[None,2,2], [2,2] ] 
+        elif pooling == 6:
+            factorization = [[None,2,3], [2,3], [3,2]]
+        elif pooling == 8:
+            factorization = [[None,2,2,2], [2,2,2], [4,2]]
+        elif pooling == 12:
+            factorization = [[None,2,2,3], [2,2,3], [4,3], [6,2]]
+        elif pooling == 16:
+            factorization = [[None,2,2,2,2], [2,2,2,2], [4,2,2], [8,2]] 
+        factorization.append( [pooling]) #last layer with full pooling 
+        print( f'building a deep inception module with pooling={pooling} and {len(factorization)} branches') 
+        strides = [] #branch information
+        for i, stride_split in enumerate( factorization):
+            branch = [ stride_split.pop(0)]
+            n_free = n_conv - len( stride_split) 
+            branch = branch + n_free*[1] + stride_split
+            strides.append( branch)
+        self.conv_layers = []
+        self.n_branches = 0
+        for branch in strides:
+            self.n_branches += 1
+            branch_layers = LayerWrapper( )
+            for i, pooling in enumerate( branch):
+                if i == 0 and pooling is not None:
+                    branch_layers.append( pool_operation( pooling))
+                elif pooling is not None:
+                    branch_layers.append( conv( i, pooling) )
+            branch_layers.append( NormalizationLayer( n_channels[-1])  )
+            self.conv_layers.append( branch_layers )
+        #self.conv_layers.append( Add())
+        self.conv_layers.append( NormalizationLayer( n_channels[-1]) )
+        ## and i think the upper part thats it
+        self.bypass = None
+        if bypass:
+            self.bypass = pool_operation( pooling)
+            #do bypass operation here
+            self.merge = LayerWrapper(  )
+            self.merge.append( NormalizationLayer( n_channels[-1] ) )
+
+
+
+    def __call__( self, images, x_extra=None, *args, training=False, **kwargs):
+        """
+        """
+        ### module evaluation
+        features = 0
+        for layer in self.conv_layers[:-1]: #everything except the normalization layer
+            features += layer( images, training=training, *args, **kwargs) 
+        features = self.conv_layers[-1]( features) #1x1 + add is equivalent to concat + 1x1 but more memory friendly
+        if self.bypass:
+            bypass = self.bypass( images, training=training, *args, **kwargs)
+            features = self.merge( [bypass,images], training=training, *args, **kwargs)
+        return features
+
+    
+    def freeze( self, freeze=True):
+        for layer in self.conv_layers:
+            try:
+                layer.freeze( freeze)
+            except:
+                layer.trainable = not freeze
+        if self.merge:
+            self.merge.freeze( freeze)
 
 
 
