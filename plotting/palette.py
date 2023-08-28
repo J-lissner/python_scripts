@@ -53,6 +53,9 @@ class UniStuttgart:
     day9yellow  = '#ffa71a'
     darkgreen   = '#00c832'
     ### other colors I required once to have a backreference here
+    teal        = '#00ffff'
+    purple      = '#6600ff'
+    pink        = '#ff66ff'
     cyan        = '#04ffc5'
     greenish    = '#04FF50'
 
@@ -75,6 +78,12 @@ class UniStuttgart:
     	- gray OR grey, gray10,20,30,40,50,60,70,80,90 (analogue for shades)
         """
         pass
+
+    def color_mixer( self, *args, **kwargs):
+        """ simply shadow the function below for namespace reasons
+        see 'palette.color_mixer' for reference """
+        return color_mixer( *args, **kwargs)
+
 
 
 def default_colorwheel():
