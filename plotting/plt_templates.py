@@ -268,10 +268,8 @@ class HandlerColormap(HandlerBase):
                         dict to put into the ax.legend() call as kwargs
                         Contains all the required handles and labels
         """
-        labels = []
-        handles = []
-        labels +=  [self.label] + [x.label for x in other_handlers]
-        handles += [Rectangle(( 0,0), 1, 1) for _ in range( 1+len(other_handlers) )]
+        labels  = [self.label] + [x.label for x in other_handlers]
+        handles = [Rectangle(( 0,0), 1, 1) for _ in range( 1+len(other_handlers) )]
         if ax is not None:
             additional_labels = ax.get_legend_handles_labels()
             labels += additional_labels[1]
