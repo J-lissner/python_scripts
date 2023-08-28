@@ -26,7 +26,7 @@ class ModularInceptionII( VolBypass):
         n_channels = [ [pooling, min(4*pooling, 64)] ] #linear scaling for first and second layer 
         n_channels.append( [min(4*pooling, 64), 96] ) #depending on pooling not to overflow memory
         n_channels.extend( (n_modules-2)*[96] ) #96 for any deeper layer
-        self.conv = [ ModularizedDeep( pooling=pooling, n_conv=n_conv, n_channels=n_channels[0], bypass=input_bypass, pool_type='avg' )]
+        self.conv = [ ModularizedDeep( pooling=pooling, n_conv=n_conv//2, n_channels=n_channels[0], bypass=input_bypass, pool_type='avg' )]
         for i in range( 1, n_modules):
             self.conv.append( ModularizedDeep( pooling=pooling, n_conv=n_conv, n_channels=n_channels[i], bypass=bypass, pool_type='max' ) )
         self.feature_concatenator= Flatten()
