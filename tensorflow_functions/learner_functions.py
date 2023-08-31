@@ -48,10 +48,13 @@ def relative_mse( y, y_pred, axis=None):
     loss:   scalar or tensorflow tensor
             loss of the prediction
     """
-    y_norm = tf.reduce_sum( tf.square(y), axis=axis )
-    error  = tf.reduce_sum( tf.square(y-y_pred), axis=axis)
-    loss   = error/y_norm
-    return loss**0.5
+    reduction = tf.range( y.ndim)[1:] if axis is None else axis 
+    y_norm = tf.reduce_mean( tf.square(y), axis=reduction )
+    error  = tf.reduce_mean( tf.square(y-y_pred), axis=reduction)
+    loss   = (error/y_norm )**0.5
+    if axis is None:
+        loss = tf.reduce_mean( loss)
+    return loss
 
 
 ##### Learning rate schedule related things
@@ -65,6 +68,40 @@ def is_slashable( lr_object):
     """ Directly return true or false if you can slahs your learning rate"""
     custom_lrs = slashable_lr()
     return isinstance( lr_object, custom_lrs) or (lr_object in custom_lrs )
+
+
+class CosineScheduler( tf.keras.optimizers.schedules.LearningRateSchedule):
+    """
+    learning rate scheduler taken from Sgdr: 'Stochastic gradient descent with warm restarts'
+    (https://arxiv.org/abs/1608.03983)
+    The publication uses
+    lr_max=0.1 wd=5e-4, i will use my adamw defaults
+    """
+    def __init__( self, cycle, max_lr=1e-3, min_lr=1e-5 ):
+        """
+        Define the shape of the learning rate scheduler, cycle defines
+        the number of steps, i.e. optimizer calls before resetting to
+        a warm restart.
+        The parameters are also copied from the associated publication
+        Parameters:
+        -----------
+        cycle:      int,
+                    number of updates before it should be warm restarted
+        max_lr:     float, default 1e-3
+                    initial value of the learning rate and value on restart
+        min_lr:     float, default 1e-5
+                    minimum lr value at the end of cycle
+        """
+        self.cycle = cycle
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+
+    def __call__( self, step):
+        i = step % self.cycle
+        lr = 1/2*(self.max_lr-self.min_lr )*( 1+np.cos( i*np.pi) )
+        return lr + self.min_lr
+
+
 
 
 class LRSchedules( tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -157,43 +194,61 @@ class LRSchedules( tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 class RemoteLR(LRSchedules):
-    """ this is a LR which will be affected mostly by remote operations 
-    the max learning rate will be estimated during runtime learning and 
-    adjusted accordingly
-    first it will be constant until plateau, then there will be 1 up jumps
-    with a fixed amount of steps and thereafter downsteps whenever it 
-    plateaus"""
-    def __init__( self, base_lr=1e-3, n_steps=50, jump=5, n_up=1, n_down=3, slash_decay=3 ):
+    """ 
+    A learning rate scheduler which is affected by the current status of
+    training. The learning rate is adjusted by events with the 'slash' function
+    and set out to work with momentum based optimizers, which have to be
+    referenced to the object. 
+    The intended use is to slash the leraning rate on 'weak convergence', and
+    reassign the stopping delay derived from the object in the 'stopping_delay'
+    variable.
+    To speed up the interval of triggers, beta parameters of Adam can be reduced
+    (beta_1=0.8, beta_2=0.85) have worked well, and a plateau loss can be used,
+    i.e. comparing the current loss to (plateau_threshold=0.95)*best_loss, which
+    has empirically proven to work out well.
+    """
+    def __init__( self, base_lr=1e-3, base_delay=75, jump=5, n_up=1, n_down=3, decay_slash=3, n_steps=50 ):
         """
-        Note that the results were pretty dependent on the weight decay
-        from adamW, it performed significantly more reliable for a decay
-        of 1e-4
+        Set the parameters of the learning rate schedule. In order for the scheduler
+        to work, the optimizer/model have to be referenced to the lr object,
+        therefore invoke the 'reference_optimizer/model' method with the corresponding
+        object. The parameters have empirically shown to work for most models with a
+        adamW weight decay of 5e-4. A trend has been observed with the number of 
+        parameters in the model and the sensitivity to the base_lr and weight decay,
+        which should be decreased for larger models
         Parameters:
         -----------
         base_lr:        float, default 1e-3
                         learnrate to start out with, max elligible leranrate will
                         be estimated during runtime, and base_lr adjusted to 
                         max( base_lr, max_lr/jump )
-        n_steps:        int, default 50
-                        how many steps the learnrate should be forced
-                        constant when we are upscaling the learnrate
-        n_up:           int, default 0
+        base_delay:     int, default 75
+                        stopping delay of the learning rate schedule, is adjusted
+                        based on the current phase and should be re-references in 
+                        the training file after every slashing/weak convergence 
+                        with 'stopping_delay = lr_schedule.stopping_delay'
+        jump:           float, default 5
+                        the multiplication/division factor of the lr on each jump
+        n_up:           int, default 1
                         How many times the learning rate should jump up, 
                         If the number is larger than 1 it will exceed 'max_lr'
-        jump:           float, default 5
-                        how big each jump should be
         n_down:         int, default 3
                         how often the learning rate should be decreased by jump
                         If n_up>0 then the number of up jumps will be added to n_down
-        slash_decay:    float, default 3
+        decay_slash:    float, default 3
                         slashes the weight decay upon LR decrease, even after the jumps
                         up. Set to False if it should not be slashed
+        n_steps:        int, default 50
+                        how many steps the learnrate should be forced
+                        constant when we are upscaling the learnrate
         """
         self.learnrate = base_lr
         self.jump      = jump
         self.n_steps   = n_steps
         self.n_up      = n_up
         self.n_down    = n_down + self.n_up 
+        self.base_delay = base_delay
+        self.stopping_delay = base_delay
         # other variables required later during evaluateion
         self.phase            = 0 #phases are: constant, (jump up to max), slash down by jump
         self.optimizer        = None
@@ -202,29 +257,36 @@ class RemoteLR(LRSchedules):
         self.allow_stopping   = False 
         self.model_parameters = []
         self.first_slash      = 1/99 #any float value to false the == condition
-        self.slash_decay = slash_decay #whether or not to slash the weight decay
+        self.decay_slash = decay_slash #whether or not to slash the weight decay
         self.slash_epoch = []
         self.step = 0
 
 
-    def slash( self, remote_call=True):
+    def slash( self, going_up=False):
         """
         Adjust the learning rate, only allow for an interference from
-        a remote call when not increasing the leranrate
+        a remote call when not increasing the learnrate
         """
         self.slash_epoch.append( self.step) #tracking variable
+        ## adjusting the stopping delay based on the phase that we are about to enter
+        if self.phase == self.n_up: #longer timespan to 'recover' from jumping
+            self.stopping_delay = int( 1.5*self.base_delay) 
+        elif self.n_up < self.phase < self.n_up + self.n_down: #shorter down path
+            self.stopping_delay = int( self.base_delay/2 )
+        elif self.phase == (self.n_up + self.n_down): #very short last phase
+            self.stopping_delay = int( self.base_delay/5 )
         ## if we are at the first phase of constant lr
         if self.phase == 0:
             self.phase += 1
             self.reset_optimizer()
-            if self.n_up != 0:
+            if self.n_up > 0:
                 self.learnrate *= self.jump 
                 print( 'increasing learning rate')
             else:
                 self.learnrate /= self.jump 
                 print( 'decreasing learning rate' )
         ## if we are currently in the up path
-        elif 0 < self.phase < self.n_up and not remote_call: #fixed duration
+        elif 0 < self.phase < self.n_up and going_up: #fixed duration
             print( 'increasing learning date')
             self.reset_optimizer()
             self.learnrate *= self.jump
@@ -235,9 +297,9 @@ class RemoteLR(LRSchedules):
             self.phase += 1
             self.reset_optimizer()
             self.learnrate /= self.jump
-            if self.slash_decay:
+            if self.decay_slash:
               try: 
-                self.optimizer.weight_decay = self.optimizer.weight_decay / self.slash_decay
+                self.optimizer.weight_decay = self.optimizer.weight_decay / self.decay_slash
                 print( ' and weight decay' )
               except: 
                 print( ', failed to decrease weight decay' ) 
@@ -245,6 +307,8 @@ class RemoteLR(LRSchedules):
             if self.phase == (self.n_up + self.n_down):
                 print( 'now enabling early stopping switch' )
                 self.allow_stopping = True #finally enable stopping of the training
+
+
 
 
     def __call__(self, step):
@@ -257,7 +321,7 @@ class RemoteLR(LRSchedules):
             self.estimate_max_lr()
         ### internally adjust the learning rate when increasing it
         if 0 < self.phase <= self.n_up and (step - self.first_slash) % self.n_steps == 0:
-            self.slash( remote_call=False)
+            self.slash( going_up=True)
         if self.phase == 1 and isinstance( self.first_slash, float): #slashed from outside on first plateau
             self.first_slash = step #tracking parameter 
         return self.learnrate 
