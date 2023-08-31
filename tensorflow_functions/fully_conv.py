@@ -166,7 +166,6 @@ class MultilevelNet( ABC):
     stopping_delay = kwargs.pop( 'stopping_delay', 30 )
     batchsize = kwargs.pop( 'batchsize', 25 )
     loss_weights = kwargs.pop( 'loss_weights', range( 1, self.n_levels+2) )
-    n_batches = max( 1, train_data[0].shape[0] // batchsize )
     learning_rate = kwargs.pop( 'learning_rate', learn.RemoteLR() )
     optimizer_kwargs = kwargs.pop( 'optimizer_kwargs', dict(weight_decay=5e-4, beta_1=0.85, beta_2=0.90  ) )
     plateau_threshold = kwargs.pop( 'plateau_threshold', 0.93 )
@@ -215,7 +214,7 @@ class MultilevelNet( ABC):
     tic( f'  ## {debug_counter} epochs', silent=True )
     for i in range( n_epochs):
       epoch_loss = []
-      for x_batch, y_batch in tfun.batch_data( n_batches, [train_data[0], y_train ] ):
+      for x_batch, y_batch in tfun.batch_data( batchsize, [train_data[0], y_train ] ):
           with tf.GradientTape() as tape:
               y_pred = self( x_batch, level, training=True )
               if len( level) == 1:
@@ -253,7 +252,6 @@ class MultilevelNet( ABC):
                 plateau_loss = plateau_loss/plateau_threshold
                 plateau_threshold = 0.98 
                 plateau_loss = plateau_loss*plateau_threshold
-                stopping_delay = 5 # there won't be alot happening anyways
             continue
           break
     toc( f'trained level {level}')
