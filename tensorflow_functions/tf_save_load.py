@@ -381,7 +381,7 @@ class Loader():
                After the variables have been loaded they need to be assigned by
                for key, value in Loader.locals( tutorial=False).items(): 
                    exec(key + '=value')\n
-               This will automatically assign all the previously saved variables\n
+               This will automatically assign all the previously saved variables
                """)
             print( '###########################################################################' )
         print()
@@ -463,7 +463,7 @@ class PartialArchitecture( Loader):
         return model
 
 
-def find_best(  logfile, shared_names=True, criteria='valid', return_value='name'):
+def find_best(  logfile, shared_names=True, criteria='valid', return_value='name', grep_kwargs=None):
   """
   Find the best model out of multiple models trained for the same output file
   Only works for the current console output of the training where we have
@@ -488,6 +488,8 @@ def find_best(  logfile, shared_names=True, criteria='valid', return_value='name
                 path to the best model. Otherwise an integer of 0-2 should be chosen
                 which returns each metric, 0 for train loss, 1 for val loss,
                 2 for rel root MSE
+  grep_kwargs:  str, default None
+                options to put into the 'grep' command, defaults to '-A 4 -B 1 "^#.*finished"'
   Returns:
   --------
   best_model:   list of ints
@@ -495,13 +497,16 @@ def find_best(  logfile, shared_names=True, criteria='valid', return_value='name
   error_metric: list of floats
                 value of each training in the selected error metric
   """ 
-  if logfile[-4:] != '.log':
-    try:
-        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile + '.log'), shell=True, stdout=subprocess.PIPE)
-    except:
-        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
-  else: 
-        finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+  if grep_kwargs:
+    finished_trainings = subprocess.Popen(  f'grep {grep_kwargs} {logfile}', shell=True, stdout=subprocess.PIPE)
+  else:
+    if logfile[-4:] != '.log':
+      try:
+          finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile + '.log'), shell=True, stdout=subprocess.PIPE)
+      except:
+          finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
+    else: 
+          finished_trainings = subprocess.Popen(  'grep -A 4 -B 1 "^#.*finished" {}'.format(logfile ), shell=True, stdout=subprocess.PIPE)
   x = str( finished_trainings.communicate()[0]) #console output from bytes to single string
   y = x.split( '\\n' )
   interval = 7 #number of lines left after popping lines
@@ -584,5 +589,5 @@ def find_best(  logfile, shared_names=True, criteria='valid', return_value='name
       best_model = best_models[2] 
   if isinstance( return_value, str) and return_value == 'name':
     return model_basename + str( best_model )  
-  metrics = [valid_losses, train_losses, rel_metric]
+  metrics = np.array( [valid_losses, train_losses, rel_metric] )
   return metrics[ return_value]
