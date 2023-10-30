@@ -18,7 +18,7 @@ class H5Loader():
         if idx.step is None: step = 1
         else: step = idx.step
         if idx.stop is None: 
-            stop = self.n_samples if idx.start > 0 else 0
+            stop = self.n_samples if start >= 0 else 0
         elif idx.stop < 0: stop = self.n_samples + idx.stop
         else: stop = idx.stop
         idx        = list( range( start, stop, step) )
@@ -52,14 +52,13 @@ class Loader3d( H5Loader):
     """ quick and dirty fix to just get the 3d data in a structured manner """
     def __init__(self, path='/scratch/lissner/dataverse/rve_3d_tests/' ):
         self.path = path + '/' if  path[-1] != '/' else path 
-        self.target_path = self.path + 'fixed_tangent_moduli.npz'
+        self.target_path = self.path + 'weighted_fixed_tangent_moduli.npz'
         self.filepath = self.path + '3d_rve.h5'
         self.h5path = '/image_data/dset_{}' 
         self.buggy_samples = [4,5,6,7] 
         self.n_samples = 2000 - len(self.buggy_samples)  #because 4 samples are buggy
         self.res = 3*(256, )
         self.replacement_idx = [2000 - x for x in self.buggy_samples]
-        self.open()
 
     def open( self):
         self.file = h5py.File( self.filepath, 'r' )
@@ -70,7 +69,7 @@ class Loader3d( H5Loader):
                 j = self.n_samples + i % self.buggy_samples[0]
             else:
                 j = i 
-            self.target_values[i] = data_container[f'arr_{j}'] #just fuckign store them ehre because they are so slamm
+            self.target_values[i] = data_container[f'arr_{j}'] #were stored in a npz file
 
     def close( self):
         self.file.close()
@@ -78,6 +77,7 @@ class Loader3d( H5Loader):
 
     def __getitem__( self, idx):
         """return images and targets """
+        self.open()
         idx = self.slice_to_ints( idx)
         n_samples = len( idx)
         images = np.zeros( (n_samples, *self.res, 1), dtype='float32' )
@@ -86,6 +86,7 @@ class Loader3d( H5Loader):
                 j = self.n_samples + j % self.buggy_samples[0]
             images[i,...,0] = self.file[self.h5path.format(j)][:]
         targets = self.target_values[idx]
+        self.close()
         return images, targets
             
 
@@ -300,14 +301,14 @@ class DarusLoader(H5Loader):
 
 class MixedLoader(H5Loader):
     """
-    A Loader object to access the hdf5 file from sanath which also contains the mechanical data.
-    I do know that there is alot of code copied from the thing above, but i do not
-    really wanna revisit the above code, i will just use this as a new template.
+    A Loader object to access the structure from the big hdf5 file, arranged from
+    sanaths script which churns out the data. Works for any hdf5 file as long as 
+    it follows the folder structure and naming convention (up to certain variations)
     If thermal and mechanical is loaded the number of samples is twice the number requested.
     They will be alternating, one mech, one thermal
     Regarding the data format, i.e. field, homogenized properties etc. are loaded for all specified
     'problems', can not differentiate between this
-    Loads all data directly into memory, does not support to 'peak' into the file with a reference
+    Loads all data directly into memory, does not support to 'peek' into the file with a reference
     """
     def __init__( self, inclusions=['circle','rectangle'], data_file=None, problems=['mech'], **load):
         """
@@ -330,6 +331,9 @@ class MixedLoader(H5Loader):
         self.image_path =  '{}_inclusions/dset_{}/image'
         self.feature_path =  '{}_inclusions/dset_{}/features'
         self.n_samples = 15000
+        if '2d_new_microstructure' in self.filepath:
+            self.n_samples = 1500
+            inclusions = ['rectangle']
         ### make the input uniform to be used in the file
         self.set_problems( problems)
         self.set_inclusions( inclusions)
@@ -359,10 +363,16 @@ class MixedLoader(H5Loader):
         self.shapes =  []
         inclusions = [inclusions] if not isinstance( inclusions, (list, tuple)) else inclusions
         inclusions = ' '.join( inclusions).lower()
+        known_convention = False
         if 'rect' in inclusions:
             self.shapes.append( 'rectangle')
+            known_convention = True
         if 'circ' in inclusions:
             self.shapes.append( 'circle')
+            known_convention = True
+        if not known_convention:
+            self.shapes.append( inclusions) 
+
 
     def set_getters( self,  **loading):
         """ 
@@ -408,6 +418,24 @@ class MixedLoader(H5Loader):
         self.kappa_file = '/scratch/lissner/dataverse/2d_rve_kappa_contrast/full_2d_data.h5' if  fname is None else fname
         self.kappa_path = '{}/target_values/heat_conduction/contrast_{}/dset_{}'
         self.phase_contrast = phase_contrast
+
+    def get_fields( self, idx):
+        feature_path = 'stress_load{}'
+        independent_components = ( [0,1,2], [1,2], [2] )
+        data = [[], []]
+        for i in idx:
+          for j, problem in zip( range( len(self.problems)), self.problems):
+            assert problem != 'Thermal', 'sorry, thermal field loading not yet implemented :P' 
+            for incl in self.shapes:  #alternating inclusions
+              fields = []
+              for k, loadings in enumerate( independent_components):
+                  load_case = self.file[ self.basepath.format( incl, i, problem) + feature_path.format(k)]
+                  for l in loadings:
+                    fields.append( load_case[l] )
+              data[j].append( self.reformat_fields( np.stack( fields, axis=0) ) )
+        if len( self.problems) == 1:
+            return np.stack( data[0], axis=0 )
+        return [np.stack( x, axis=0) for x in data ]
 
 
     def get_features( self, idx):
@@ -472,9 +500,16 @@ class MixedLoader(H5Loader):
         """
         if problem == 'Elastic':
             kappa = np.zeros( 6)
+            ## full 3x3 representation (does contain symmetries)
+            #for i in range(3): #3 responses
+            #  for j in range( 3): #3 loadings
+            #    prefactor = 2**0.5 if i == 2 else 1
+            #    kappa[i+j*3] = prefactor * homo_matrix[i,j]
+            ## representation using symmetries and mandel notation
+            diag_weights = [1,1,2]
             for i in range(3):
-                kappa[i] = homo_matrix[i,i]
-            kappa[-3] = 2**0.5* homo_matrix[0,1]
+                kappa[i] = diag_weights[i]*homo_matrix[i,i]
+            kappa[-3] = homo_matrix[0,1]
             kappa[-2] = 2**0.5* homo_matrix[0,2]
             kappa[-1] = 2**0.5* homo_matrix[1,2]
         if problem == 'Thermal':
@@ -483,6 +518,31 @@ class MixedLoader(H5Loader):
                 kappa[i] = homo_matrix[i,i]
             kappa[-1] = 2**0.5* homo_matrix[0,1]
         return kappa
+
+    def mandel_to_tensor( self, data, problem ):
+        """ 
+        reformat the given data which has been vectorized in mandel 
+        notation and put it back into tensor notation with the correct 
+        weighting. Blindly assumes the 2d case for now
+        Parameters:
+        -----------
+        data:   numpy 2d-array
+                vectorized data array in mandel notation
+        """
+        if problem == 'heat':
+            tensor = np.zeros(( data.shape[0], 2,2))
+            tensor[:,0,1] = data[:,-1] / 2**0.5
+            tensor += np.transpose( tensor, axes=(0,2,1) )
+            for i in range( 2):
+                tensor[:,i,i] = data[:,i]
+        elif problem == 'mech':
+            tensor = np.zeros(( data.shape[0], 3, 3))
+            for i,j in enumerate( [(slice(None), 1,2), (slice(None), 0,2), (slice(None), 0,1)] ):
+                tensor[j] = data[:,i-1] / 2**0.5
+            tensor += np.transpose( tensor, axes=(0,2,1) )
+            for i in range( 3):
+                tensor[:,i,i] = data[:,i]
+        return tensor
     
     def reformat_fields( self, image):
         """
@@ -491,7 +551,7 @@ class MixedLoader(H5Loader):
         """
         res = int( round( image.shape[-1]**0.5) )
         n_channels = image.shape[0]
-        images = np.zeros( (res, res, image.shape[0]) )
+        images = np.zeros( (res, res, n_channels) )
         for i in range( n_channels):
             images[...,i] = image[i].reshape( res, res)
         return images
@@ -506,7 +566,10 @@ class MixedLoader(H5Loader):
       try:
           self.open()
       except:
-          print( 'fill already open for reading, closing it after loading' )
+          if not os.path.exists( self.filepath):
+            print( f'file {self.filepath} does not exist, unable to load data' )
+          else:
+            print( 'file already open for reading, closing it after loading' )
       for getter in self.getters:
           data.append( getter( idx) )
       ## for all indices get the requested image
