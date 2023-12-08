@@ -116,7 +116,7 @@ class ReducedBasis():
             V_star = V_star[:,permutation]
 
         #compute the truncation limit
-        added_info = np.linalg.norm( delta_S, 'fro')**2
+        added_info = np.linalg.norm( delta_S)**2 #defauls to frobenius in 2d
         for N_trunc in range( delta_S.shape[1], -1, -1): #revert the range and loop until 1
             truncation_error = max( 0, np.sum( Theta[-N_trunc:]**2) /added_info )**0.5
             if truncation_error < self.truncation_limit:
@@ -148,7 +148,7 @@ class ReducedBasis():
         Theta = Theta[permutation]
         V = V[permutation] 
         # Compute the truncation limit
-        sum_eig = np.linalg.norm( delta_S, 'fro')**2
+        sum_eig = np.linalg.norm( delta_S)**2
         for N in range( delta_S.shape[1], -1, -1): #revert the range and loop until 1
             truncation_error = max( 0, np.sum( Theta[-N:]**2)/sum_eig )**0.5
             if truncation_error < self.truncation_limit:
@@ -239,8 +239,8 @@ class ReducedBasis():
         if pcf.ndim == 1:
             pcf = pcf[None] 
             xi = xi[None]#implying xi is a 1 vector too
-        data_norm = np.linalg.norm( pcf,'fro')**2 #just ad ann axis that it always goes through
-        p_delta = (1.0- (np.linalg.norm( xi, 'fro')**2 / data_norm) )**0.5
+        data_norm = np.linalg.norm( pcf)**2 #just ad ann axis that it always goes through
+        p_delta = (1.0- (np.linalg.norm( xi)**2 / data_norm) )**0.5
         return p_delta
 
 
@@ -382,7 +382,7 @@ class FourierBasis(ReducedBasis):
         ndim = len( self.resolution )
         if self.is_shrunk == 0:
             reference_mode = self.B[:,inspected_mode].reshape( self.resolution)
-            info_last = np.linalg.norm( reference_mode, 'fro' )
+            info_last = np.linalg.norm( reference_mode) #defaults to frobenius in 2d
             for N_c in range( 1, min(self.resolution)//2 -1):
                 truncated_mode = reference_mode.copy().reshape( self.resolution)
                 for i in range( ndim ):  
@@ -390,7 +390,7 @@ class FourierBasis(ReducedBasis):
                     #always consider 0 frequency for norm consideration
                     indexing[i] = slice( N_c +1, self.resolution[i]-N_c) 
                     truncated_mode[ tuple( indexing) ] = 0
-                diff = np.linalg.norm( reference_mode, 'fro') - np.linalg.norm( truncated_mode, 'fro') 
+                diff = np.linalg.norm( reference_mode) - np.linalg.norm( truncated_mode) 
                 #diff = np.linalg.norm( reference_mode - truncated_mode, 'fro')
                 rel_error = diff /info_last
                 if rel_error < tol:
