@@ -57,6 +57,18 @@ def relative_mse( y, y_pred, axis=None):
     return loss
 
 
+def stable_scce( y, y_pred, shift=0.25):
+    """
+    Implementation of the sparse categorical cross entropy with a shift in the log
+    term to never be -inf 
+    """
+    n_classes = y.shape[-1]
+    correct_prediction = tf.reduce_sum( y * tf.math.log( y_pred + shift) ) 
+    wrong_prediction = tf.reduce_sum( (1- y) * tf.math.log( 1-y_pred + shift) )
+    loss = - 1/n_classes * (correct_prediction + wrong_prediction )
+    return loss
+    
+
 ##### Learning rate schedule related things
 def slashable_lr():
     """ have all lr objects  which contain the slash function (must inherit
@@ -98,6 +110,8 @@ class CosineScheduler( tf.keras.optimizers.schedules.LearningRateSchedule):
 
     def __call__( self, step):
         i = step % self.cycle
+        if i == 0 and step > 0:
+            print( 'warm restarting cosine learning rate')
         lr = 1/2*(self.max_lr-self.min_lr )*( 1+np.cos( i*np.pi) )
         return lr + self.min_lr
 

@@ -14,7 +14,7 @@ from hybrid_models import VolBypass
 
 
 class ResNet( VolBypass):
-    def __init__( self, n_out, resx=False, sne=False, concatenator=Add,  *args, **kwargs):
+    def __init__( self, n_out, resx=False, sne=False, concatenator=Add, output_activation=None, *args, **kwargs):
         """
         Build the resnet50 as it is in the literature,
         can also build the resXnet50, simply by setting the resx to true
@@ -50,7 +50,7 @@ class ResNet( VolBypass):
                 else:
                     self.architecture.append( layer( n_channels[i][j], sne=sne, concatenator=concatenator) )
         self.architecture.append( GlobalAveragePooling2D() )
-        self.architecture.append( Dense( n_out) )
+        self.architecture.append( Dense( n_out, activation=output_activation) )
 
     def call( self, images, x=False, training=False):
         images = self.architecture( images, training=training) 

@@ -89,8 +89,8 @@ class Conv2DPeriodic( Conv2D):
         if 'padding' in kwargs:
             self.pad = kwargs['padding'].lower()
         else:
-            self.pad = 'same'
-        kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
+            self.pad = 'periodic'
+            kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
         super().__init__( *args, **kwargs)
         if 'kernel_size' in kwargs:
             self.k_size = kwargs['kernel_size']
@@ -100,12 +100,12 @@ class Conv2DPeriodic( Conv2D):
             self.k_size =  self.k_size + (self.k_size -1) * (kwargs['dilation_rate']-1)
 
     def __call__(self, data, *args, **kwargs):
-        if self.pad == 'valid':
+        if self.pad in [ 'same', 'valid']:
             return super().__call__( data, *args, **kwargs)
-        elif self.pad in ['same', 'same_periodic']:
+        elif self.pad in ['same_periodic', 'periodic']:
             return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
-            raise Exception( 'requested padding is not implemented yet')
+            raise Exception( 'requested padding "{}" not implemented'.format( self.pad) )
 
 
 
@@ -127,8 +127,8 @@ class AvgPool2DPeriodic( AveragePooling2D):
         if 'padding' in kwargs:
             self.pad = kwargs['padding'].lower()
         else:
-            self.pad = 'same'
-        kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
+            self.pad = 'periodic'
+            kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
         super().__init__( *args, **kwargs)
         if 'pool_size' in kwargs:
             self.k_size = kwargs['pool_size']
@@ -136,12 +136,12 @@ class AvgPool2DPeriodic( AveragePooling2D):
             self.k_size = args[0]
 
     def __call__(self, data, *args, **kwargs):
-        if self.pad == 'valid':
+        if self.pad in [ 'same', 'valid']:
             return super().__call__( data, *args, **kwargs)
-        elif self.pad in ['same', 'same_periodic']:
+        elif 'periodic' in self.pad:
             return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
-            raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
+            raise Exception( 'requested padding "{}" not implemented'.format( self.pad) )
 
 
 class MaxPool2DPeriodic( MaxPool2D):
@@ -159,11 +159,11 @@ class MaxPool2DPeriodic( MaxPool2D):
                 Also note that padding has to be set by kwargs, not by args
     """
     def __init__( self, *args, **kwargs):
-        if 'padding' in kwargs:
+        if 'padding' in kwargs: #can use normal layer
             self.pad = kwargs['padding'].lower()
-        else:
-            self.pad = 'same'
-        kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
+        else: #default behaviour periodic padding
+            self.pad = 'periodic'
+            kwargs['padding'] = 'valid' #overwrite to remove any padding on operation
         super().__init__( *args, **kwargs)
         if 'pool_size' in kwargs:
             self.k_size = kwargs['pool_size']
@@ -171,12 +171,12 @@ class MaxPool2DPeriodic( MaxPool2D):
             self.k_size = args[0]
 
     def __call__(self, data, *args, **kwargs):
-        if self.pad == 'valid':
+        if self.pad in [ 'same', 'valid']:
             return super().__call__( data, *args, **kwargs)
-        elif self.pad in ['same', 'same_periodic']:
+        elif 'periodic' in self.pad:
             return super().__call__( pad_periodic( self.k_size, data), *args, **kwargs ) 
         else:
-            raise Exception( 'requested padding "{}" is not implemented yet'.format( self.pad) )
+            raise Exception( 'requested padding "{}" not implemented'.format( self.pad) )
 
 
 class Conv2DTransposePeriodic( Conv2DTranspose):
@@ -385,7 +385,7 @@ class DeepInception( Layer):
 
 
 class ModularizedDeep( Layer):
-    def __init__( self, n_conv=8, pooling=8, n_channels=64, bypass=False, pool_type='max', *args, **kwargs ):
+    def __init__( self, n_conv=8, pooling=8, n_channels=64, bypass=False, pool_type='max', padding='periodic', *args, **kwargs ):
         """
         Initialize a deep inception module with multiple branches of 
         of different receptive field. The module is only implemented
@@ -421,7 +421,7 @@ class ModularizedDeep( Layer):
         n_channels = 2*n_channels if len( n_channels) == 1 else n_channels
         conv = lambda i, pooling: Conv2DPeriodic( 
                 int(n_channels[0]+(i)/n_conv*(n_channels[1]-n_channels[0])), 
-                kernel_size=3, strides=pooling, activation='selu'  )
+                kernel_size=3, strides=pooling, activation='selu', padding=padding  )
         if isinstance( pool_type, str):
             if 'avg' in pool_type.lower() or 'average' in pool_type.lower():
                 pool_operation = AvgPool2DPeriodic
@@ -457,7 +457,7 @@ class ModularizedDeep( Layer):
             branch_layers = LayerWrapper( )
             for i, pooling in enumerate( branch):
                 if i == 0 and pooling is not None:
-                    branch_layers.append( pool_operation( pooling))
+                    branch_layers.append( pool_operation( pooling, padding=padding))
                 elif pooling is not None:
                     branch_layers.append( conv( i, pooling) )
             branch_layers.append( NormalizationLayer( n_channels[-1])  )
@@ -469,7 +469,7 @@ class ModularizedDeep( Layer):
         if bypass:
             self.bypass = pool_operation( pooling)
             #do bypass operation here
-            self.merge = LayerWrapper(  )
+            self.merge = LayerWrapper( bypass )
             self.merge.append( NormalizationLayer( n_channels[-1] ) )
 
 

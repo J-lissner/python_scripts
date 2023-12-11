@@ -253,6 +253,20 @@ class FeaturePredictor( VolBypass):
         layers.append( layer( neurons[i] ) )
     layers.append( Dense( self.n_output) )
 
+
+  def reworked_feature_regressor( self, neurons=[45,32,25], *args, **kwargs ):
+    """ practically the same architecture as above, but batch normalization after every hidden layer 
+    and before actiovation function, just see if its significantly better"""
+    self.feature_regressor = []
+    layers                 = self.feature_regressor
+    ## selu function needed to catch the 'training' args/kwargs
+    selu = lambda x, *args, **kwargs: tf.keras.activations.selu( x)
+    for neuron in neurons:
+        layers.append( Dense( neuron) )
+        layers.append( BatchNormalization() )
+        layers.append( selu )
+    layers.append( Dense( self.n_output) )
+
   def freeze_feature_predictor( self, freeze=True):
     """ freeze or unfreeze the feature predictor """
     try:
