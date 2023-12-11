@@ -7,7 +7,7 @@ from math import ceil, floor
 from palette import UniStuttgart as uniS
 
 
-def density_blur( ax, scatters, limits=None, plot_resolution=(800,800), blur_size=(64,64), cmap='jet'  ):
+def density_blur( ax, scatters, limits=None, plot_resolution=(800,800), blur_size=(64,64), cmap='jet', more_means=[]  ):
     """
     Map the data onto an arbitrary grid and then create a density blur via convolution
     Maps the data in such a way that each sample is within the given boundary
@@ -26,6 +26,9 @@ def density_blur( ax, scatters, limits=None, plot_resolution=(800,800), blur_siz
                     approximate size of the blur
     cmap:           str or matplotlib colormap, default 'jet'
                     colormap for plotting, note that jet looks nice but is not scientific
+    more_means:     list like of two-float pairs
+                    different mean spots which should be indicated (with orange) such
+                    to serve as comparison within one graphic
     Returns:
     --------
     blur:           numpy 2d-array
@@ -87,7 +90,12 @@ def density_blur( ax, scatters, limits=None, plot_resolution=(800,800), blur_siz
     ## mean decorator
     mean_spot = scatter_new.mean(0) 
     mean_spot = [[ *2*[mean_spot[0]], -1e5 ], [1e5, *2*[mean_spot[1]] ] ]
-    ax.plot( *mean_spot, ls='--', lw=1.2, markersize=10, color=uniS.blue, marker='x', label='mean' )
+    ax.plot( *mean_spot, ls='--', lw=1.2, markersize=12, color=uniS.red, marker='X', mec='white', label='mean' )
+    for mean in more_means:
+        for j in range( len( more_means) ):
+            mean[j] = scatter_remap[j]( mean[j] ) 
+        mean_spot = [[ *2*[mean[0]], -1e5 ], [1e5, *2*[mean[1]] ] ]
+        ax.plot( *mean_spot, ls='--', lw=1.0, markersize=10, color=uniS.day9yellow, marker='X', mec='black', alpha=0.66 )
     #ax.grid()
     return blur
 
