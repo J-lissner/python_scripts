@@ -52,7 +52,7 @@ class Loader3d( H5Loader):
     """ quick and dirty fix to just get the 3d data in a structured manner """
     def __init__(self, path='/scratch/lissner/dataverse/rve_3d_tests/' ):
         self.path = path + '/' if  path[-1] != '/' else path 
-        self.target_path = self.path + 'weighted_fixed_tangent_moduli.npz'
+        self.target_path = self.path + 'fixed_tangent_moduli.npz'
         self.filepath = self.path + '3d_rve.h5'
         self.h5path = '/image_data/dset_{}' 
         self.buggy_samples = [4,5,6,7] 

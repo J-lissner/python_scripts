@@ -355,7 +355,6 @@ class Loader():
 
     def load_locals(self, tutorial=True):
         """
-        #TODO i think there might be a bug here on the pickle.load
         Restore the locally defined variables in the previous training.
         This function requires additional code in the main file to work (see below)
         If the code is executed, the local variables are usable 

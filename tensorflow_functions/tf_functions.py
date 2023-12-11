@@ -25,7 +25,7 @@ def to_float32( *args, arraytype='numpy'):
     """
     return_values = []
     for arg in args:
-      if arraytype == 'numpy':
+      if arraytype in ['np', 'numpy']:
         return_values.append( arg.astype( np.float32) )
       elif arraytype in ['tf', 'tensorflow']:
         return_values.append( tf.cast( arg, tf.float32) )
@@ -129,6 +129,7 @@ def n_trainable( model):
                 total number of trainable parameters
     """
     return sum([np.prod( x.shape) for x in model.trainable_variables])
+
 def train_model( model, data, valid_data, savepath=None, best_loss=1, call=None, image_idx=None, *call_args, **call_kwargs):
     """
     fully train the passed model to convergence with all the default

@@ -21,7 +21,7 @@ def image_stack( to_file, images, pos=[0,0], increments=[0.5,0.5], slant=0, imag
     os.system( "echo '\\\\end{scope}'" + to_file ) 
 
 
-def dense_model( to_file, start_coos=None, neurons=None, inf_hidden=3, n_in='inf', n_out=3, n_inf=None, n_dots=3, **kwargs):
+def dense_model( to_file, start_coos=None, neurons=None, inf_hidden=3, n_inf=None, n_dots=3, **kwargs):
     """
     Echo a generic dense model from x_start using <len(neurons)> hidden
     layers and display the amount of specified neurons
@@ -35,7 +35,7 @@ def dense_model( to_file, start_coos=None, neurons=None, inf_hidden=3, n_in='inf
                 (x_start,y_middle) coordinates, defaults to ( neuron_width, middle_y_req)
     neurons:    list of ints and 'inf', default None
                 how many neurons per layer, layers given as
-                [input, n*[hidden], output layer]
+                [input, *n*[hidden], output layer]
                 defaults to ['inf', *3*['inf'], 3]
     inf_hidden: int, default 3
                 if the middle hidden layer should be turned into 'inf'
@@ -415,7 +415,7 @@ def conv_layer( n_channel, pos, to_file, scale=1, base_size=2.5, base_distance=0
 def conv_coordinates( size, pos, slant, node_label, to_file, scale=1 ):
     """
     Give all edge coordinates of the channel of current <size> at current
-    <pos>ition. The edges are enumerated as TR: A, BR: B, TL: C, BL: D, middle: M
+    <pos>ition. The edges are enumerated as TR: A, BR: B, TL: C, BL: D, middle: M, mid bot E
     Parameters:
     -----------
     size:       list like of floats
@@ -427,12 +427,13 @@ def conv_coordinates( size, pos, slant, node_label, to_file, scale=1 ):
     to_file:    str, where to pipe the console output
     """
     size = [ x*scale for x in size]
-    pos_x = 2*[pos[0] + size[0]/2]  + 2*[pos[0] - size[0]/2] + [pos[0]]
+    pos_x = 2*[pos[0] + size[0]/2]  + 2*[pos[0] - size[0]/2] + [pos[0]] + [pos[0]]
+
     y_0   = pos[1] - pos[0] * slant
-    pos_y = [y_0 + size[1]/2]  + [y_0 - size[1]/2] +[y_0 + size[1]/2]  + [y_0 - size[1]/2] + [y_0]
+    pos_y = [y_0 + size[1]/2]  + [y_0 - size[1]/2] +[y_0 + size[1]/2]  + [y_0 - size[1]/2] + [y_0] + [y_0 - size[1]/2]
     os.system( "echo '\\\\begin{{scope}}[yslant={}]'".format(slant) + to_file )
-    corners = 'ABCDM' #corners and middle
-    for i in range( 5):
+    corners = 'ABCDME' #corners and middle
+    for i in range( len(corners)):
         label = node_label.format( corners[i])
         os.system( "echo '  \\\\coordinate ({}) ".format( label) + 'at ({}, {}) '.format(pos_x[i], pos_y[i] ) + "{};'" + to_file )
     os.system( "echo '\\\\end{scope}'" + to_file )
