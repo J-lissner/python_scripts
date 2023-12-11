@@ -53,10 +53,10 @@ class MultilevelNet( ABC):
       """
       ## input processing and variable allocation
       n_batches =  int(inputs[0].shape[0]// batchsize)
-      if n_batches == 1:
-          return self( *inputs, **kwargs)
       if predictor is None:
           predictor = self
+      if n_batches == 1:
+          return predictor( *inputs, **kwargs)
       prediction = []
       n_samples = inputs[0].shape[0] if inputs else kwargs.items()[0].shape[0]
       jj = 0 #to catch 1 batch
@@ -70,8 +70,8 @@ class MultilevelNet( ABC):
       sliced_args = get.slice_args( jj, None, *inputs)
       sliced_kwargs = get.slice_kwargs( jj, None, **kwargs) 
       prediction.append( predictor( *sliced_args, **sliced_kwargs ) )
-      if isinstance( prediction[0], (list,tuple) ): #multilevel prediction
-         prediction = [ concatenate( x, axis=0) for x in zip( *prediction)]  
+      if isinstance( prediction[0], (list,tuple) ): #multilevel prediction, or multiple features
+          prediction = [ concatenate( x, axis=0) for x in zip( *prediction)]  
       else:
           prediction = concatenate( prediction, axis=0) 
       return prediction
@@ -185,10 +185,11 @@ class MultilevelNet( ABC):
             poolers.append( AvgPool2DPeriodic( 2**(self.n_levels-i) ) )
         elif i < self.n_levels:
             poolers.insert(0, AvgPool2DPeriodic( 2**(highest_level-i) ) ) 
-    y_train = poolers[-1]( train_data.pop(-1) ) #can pool on the highest level anyways
-    y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level
+    #y_train = poolers[-1]( train_data.pop(-1) ) #can pool on the highest level anyways
+    y_valid = poolers[-1]( valid_data.pop(-1) )  #only validate the highest level #note, unclean memory workaround
     x_valid = valid_data[0]
-    poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function
+    #poolers[-1] = lambda x: x #we have downsampled to lowest resolution, now retain function #note commented out for unclean workaround
+    poolers.insert( -1, lambda x: x) #we have downsampled to lowest resolution, now retain function #note commented out for unclean workaround
     ## other tensorflow objects related things
     if isinstance( learning_rate, learn.slashable_lr() ):
         learning_rate.reference_optimizer( optimizer)
@@ -214,9 +215,10 @@ class MultilevelNet( ABC):
     tic( f'  ## {debug_counter} epochs', silent=True )
     for i in range( n_epochs):
       epoch_loss = []
-      for x_batch, y_batch in tfun.batch_data( batchsize, [train_data[0], y_train ] ):
+      for x_batch, y_batch in tfun.batch_data( batchsize, train_data): #[train_data[0], y_train ] ):
           with tf.GradientTape() as tape:
               y_pred = self( x_batch, level, training=True )
+              y_batch = poolers[-1](y_batch) #NOTE: unclean memory workaround
               if len( level) == 1:
                   batch_loss = cost_function( y_batch, y_pred )
               else:
@@ -556,6 +558,160 @@ class VVEnet( SlimNet):
     if self.enabled:
         prediction += self.high_level_prediction( images, training=training, **layer_kwargs )
     return prediction
+
+
+
+from unet_modules import UpsamplingConcatenate, FeatureTransmuter, EvenDownsampler, MyResBlock
+class VENet( Model, MultilevelNet):
+  """ 
+  Clean implementation of the unet, cohesive building blocks 
+  and slim evaluation scheme (code wise)
+  """
+  def __init__( self, n_out, n_levels=4, n_channels=12, channel_function=None, *args, **kwargs):
+    """ 
+    Parameters:
+    -----------
+    n_out:              int,
+                        number of feature maps to predict
+    n_levels:           int, default 4
+                        number of times to downsample (input & prediction)
+    n_channels:         int, default 12
+                        number of channels (constant) in each level 
+    channel_function:   lambda function, default None
+                        how to increase the channels in each level, defaults
+                        to: lambda( level): n_channels * ( 1+ level/3 ) )
+    """
+    super().__init__( *args, **kwargs)
+    if channel_function is None:
+        channel_function = lambda level, n_channels: int( n_channels * ( 1 + level/3 ) )
+    self.n_out = n_out
+    self.n_levels = n_levels
+    self.down_path = []
+    self.up_path = []
+    self.side_predictors = [ ]
+    ## have the branch which gives the side prediction, for now
+    ## with constant channel amount
+    for i in range( n_levels):
+        n_current = channel_function( i, n_channels)
+        self.down_path.append( EvenDownsampler( n_current) )  
+        self.up_path.append( FeatureTransmuter( n_current, pooling_factor=2**(i+1) ) )
+        self.side_predictors.append( Conv2D( n_out, kernel_size=1)) 
+    self.up_path = self.up_path[::-1] #simplified version
+    self.side_predictors = self.side_predictors[::-1]
+    #predict via resnet module
+    self.last_upsampler = UpsamplingConcatenate( n_channels)
+    self.predictor = LayerWrapper( MyResBlock( 2*n_out, n_conv=2, bypass=Conv2D( 2*n_out, kernel_size=1) ))
+    self.predictor = LayerWrapper( Conv2DPeriodic( 2*n_out, kernel_size=3, activation='selu') )
+    self.predictor.append( Conv2D( n_out, kernel_size=1))
+
+
+  def call( self, images, level=False, only_features=False, training=False):
+    """
+    Predict the images from the specified level.
+    If <level> is set to false, only the fine resolution prediction is given
+    Parameters:
+    images:     tensorflow.tensor
+                image data to predict
+    level:      iterable of ints, default False
+                which level to return, 0 is lowest, self.n_levels is original resolution
+                If set to True, it returns all levels, (False only last)
+    training:   bool, default False
+                if the layers are currently trained
+    """
+    ## translate multilevel prediction here to a list of integers
+    level = range(self.n_levels + 1) if level is True else level 
+    level = [level] if not (isinstance( level, bool) or hasattr( level, '__iter__' ) ) else level
+    ## first go down and store everything in a list
+    predictions = []
+    down_path = [ images ] #required for the last level
+    for layer in self.down_path:
+        down_path.append( layer( down_path[-1], training=training ) )
+    ## now go up again (and store) the side prediction
+    prediction = None
+    level_features = None
+    for i in range( len( self.side_predictors)):
+        level_features = self.up_path[i]( images, down_path.pop( -1), level_features, prediction, training=training ) 
+        prediction = self.side_predictors[i]( level_features, training=training ) 
+        ## conditional check on how to store/return current level
+        if level is not False and i in level: 
+            predictions.append( prediction)
+            if  len( level) == 1: return predictions[0] #same as [-1]
+            elif i == max(level): return predictions
+    # level_features now concatenated all required channels, also the image from 'down_path'
+    level_features = [level_features, prediction, images] #for the last layer, also tune upsampler
+    if only_features: return level_features #for finetuning training
+    prediction = self.predict_tip( level_features, training=training)
+    ## conditional check on how to handle return values
+    if level is not False and len(level) > 1:  #may only happen if last level requested
+        predictions.append( prediction) 
+        return predictions
+    return prediction 
+
+  def predictor_features( self, images, *args, **kwargs):
+    """
+    Return the input to the 'predictor' in order to save computational
+    time when only training the predictor
+    Parameters:
+    -----------
+    images:       tensorflow.tensor
+                  input data to the model
+    Returns:
+    --------
+    channels:     list of tensorflow.tensors,
+                  *args to pipe to the model.predict method
+                  Note that the list is required for code template
+    """
+    return self( images, only_features=True)
+
+  def predict_tip( self, level_features, *args, training=False):
+    """
+    upsample the given quantities and yield the final prediction
+    Parameters:
+    -----------
+    level_features:   list of three tensorflow.tensors
+                      must contain the following arrays in this order
+                      [level_features, prediction, images], where the 
+                      first two correspond to the things on the second 
+                      to last level 
+    training:         bool, default False 
+                      flag for training
+    """
+    if args:
+        if isinstance( level_features, (list,tuple) ):
+            level_features = level_features + list( args)
+        else:
+            level_features = [level_features] + list( args)
+    prediction = self.last_upsampler( *level_features, training=training)
+    return self.predictor( prediction, training=training)
+ 
+  ## freezer functions for my LayerWrapper
+  def freeze_upto( self, freeze_limit, freeze=True):
+    self.freeze_down_path( freeze)
+    self.freeze_up_path( freeze, freeze_limit) 
+    self.freeze_side_predictors( freeze, freeze_limit)
+    self.freeze_predictor( not (freeze_limit == self.n_levels )  )
+  ## freeze functions for each different 
+  def freeze_down_path( self, freeze=True):
+      for layer in self.down_path:
+          layer.freeze( freeze)
+  ##
+  def freeze_up_path( self, freeze=True, up_to=None):
+      for layer in self.up_path[:up_to]:
+          layer.freeze( freeze)
+  ## 
+  def freeze_side_predictors( self, freeze=True, up_to=None):
+      if up_to is not None:
+          up_to = min( self.n_levels, up_to +1 )
+      for layer in self.side_predictors[:up_to]:
+          try:
+            layer.freeze( freeze)
+          except:
+            layer.trainable = not freeze
+  ##
+  def freeze_predictor( self, freeze=True):
+      self.predictor.freeze( freeze)
+      self.last_upsampler.freeze( freeze)
+
 
 
 

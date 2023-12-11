@@ -249,4 +249,146 @@ class InceptionEncoder( Layer):
     self.downsamplers.freeze( freeze)
 
 
+class EvenDownsampler( Layer):
+  """
+  Module on the down path, use even sized kernels 
+  also employ only add instead of concat
+  """
+  def __init__( self, n_channels, *args, **kwargs):
+    super().__init__( *args, **kwargs)
+    inception_downsampler = [ Conv2DPeriodic( n_channels, kernel_size=2, strides=2, activation='selu'  ) ]
+    inception_downsampler.append(  Conv2DPeriodic( n_channels, kernel_size=4, strides=2, activation='selu'  ) )
+    self.downsamplers = LayerWrapper( inception_downsampler)
+    self.downsamplers.append( Add() )
+    self.downsamplers.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
+
+  def append( self, layer):
+    self.downsamplers.append( layer)
+
+  def __call__( self, images, *layer_args, **layer_kwargs):
+    return self.downsamplers( images, *layer_args, **layer_kwargs)
+
+  def freeze( self, freeze=True):
+    self.downsamplers.freeze( freeze)
+
+
+class FeatureTransmuter( Layer):
+    """
+    Collect all features (cg image, down path, up path, previous prediction)
+    and gather them into a single stack, then transform the features for
+    current level using two res blocks
+    """
+    def __init__( self, n_channels, pooling_factor, *args, **kwargs):
+        """
+        Parameters:
+        -----------
+        n_channels:     int
+                        number of channels at current level, governs 
+                        the number of intermediate/output chanenls
+        pooling_factor: int
+                        pooling factor to obtain current level from 
+                        original inpyt resolution
+        """
+        super().__init__( *args, **kwargs)
+        n_resblock = 2
+        self.coarse_grainer = AvgPool2DPeriodic( pooling_factor)
+        self.upsampling = UpSampling2D()
+        self.down_weighter = NormalizationLayer( n_channels)
+        feature_upsampler = [ Conv2DTransposePeriodic( n_channels, kernel_size=2, strides=2, activation='selu') ]
+        feature_upsampler.append( Conv2DTransposePeriodic( n_channels, kernel_size=4, strides=2, activation='selu' ) )
+
+        self.feature_upsampler = LayerWrapper( feature_upsampler)
+        self.feature_upsampler.append( Add() )
+        self.feature_upsampler.append( NormalizationLayer( n_channels) )
+        self.feature_transmuter = LayerWrapper( NormalizationLayer( n_channels) )
+        for i in range( n_resblock): 
+            self.feature_transmuter.append( MyResBlock( n_channels))
+            self.feature_transmuter.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu'))
+            self.feature_transmuter.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu'))
+
+
+    def __call__( self, image, down_channels, up_channels=None, prediction=None, *args, training=False, **kwargs):
+        plain_data = self.coarse_grainer( image)
+        if prediction is not None:
+            prediction = self.upsampling( prediction, training=training)
+            plain_data = concatenate( [plain_data, prediction] )
+        feature_channels = self.down_weighter( down_channels, training=training )
+        if up_channels is not None:
+            feature_channels += self.feature_upsampler( up_channels)
+        feature_channels = concatenate( [plain_data, feature_channels] )
+        return self.feature_transmuter( feature_channels)
+
+
+    def freeze( self, freeze=True):
+        """ freeze the weights of the feature transmuter, the rest is non parametric """
+        try:
+            self.coarse_grainer.freeze( freeze) 
+        except:
+            pass #is a pooling layer
+        try:
+            self.upsampling.freeze( freeze) 
+        except:
+            pass #is a pooling layer
+        self.down_weighter.freeze( freeze)
+        self.feature_upsampler.freeze( freeze)
+        self.feature_transmuter.freeze( freeze)
+
+
+class UpsamplingConcatenate( Layer):
+    def __init__( self, n_channels, *args, **kwargs):
+        super().__init__( *args, **kwargs)
+        feature_upsampler = [ Conv2DTransposePeriodic( n_channels, kernel_size=2, strides=2, activation='selu') ]
+        feature_upsampler.append( Conv2DTransposePeriodic( n_channels, kernel_size=4, strides=2, activation='selu' ) )
+
+        self.feature_upsampler = LayerWrapper( feature_upsampler)
+        self.feature_upsampler.append( Add() )
+        self.feature_upsampler.append( NormalizationLayer( n_channels) )
+        self.upsampling = UpSampling2D()
+
+    def freeze( self, freeze=True):
+        """ freeze the weights of the upsampling, the rest is non parametric """
+        self.feature_upsampler.freeze( freeze) 
+
+    def __call__( self, features, prediction, images=None, training=False):
+        prediction = [self.upsampling( prediction)]
+        if images is not None:
+            prediction.append( images)
+        features = [ self.feature_upsampler( features, training=training)] #list for concat
+        return concatenate( features + prediction)
+
+
+
+
+class MyResBlock( Layer):
+    def __init__( self, n_channels, n_conv=2, bypass=None, *args, **kwargs):
+        """
+        Paramters:
+        ----------
+        n_channels: int
+                    number of output channels in total and in each operation
+        n_conv:     int, default 2
+                    number of 3x3 convolutions in the operating branch
+        bypass:     invoked layer or None
+                    operation used in bypass before adding to the result
+        """
+        super().__init__( *args, **kwargs)
+        n_conv = 2
+        self.bypass = bypass
+        self.conv = LayerWrapper()
+        for i in range( n_conv):
+            self.conv.append( Conv2DPeriodic( n_channels, kernel_size=3, activation='selu') )
+
+    def __call_( self, images, *args, training=False, **kwargs ):
+        features = self.conv( images, *args, **kwargs, training=training )
+        if self.bypass is not None:
+            images = self.bypass( images)
+        return features + images
+    
+    def freeze( self, freeze=True):
+        self.conv.freeze( freeze)
+        if self.bypass is not None:
+            try: self.bypass.freeze( freeze)
+            except: self.bypass.trainable = not freeze
+        
+
 
