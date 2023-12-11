@@ -421,6 +421,8 @@ def export_borderless( image, savename, file_ending='.pdf', cmap=None, size=None
     --------
     None:       saves to file
     """
+    if isinstance( image, str) and not isinstance( savename, str):
+        image, savename = savename, image
     if size:
         fig, ax = plt.subplots( figsize=size)
     else: 

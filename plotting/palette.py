@@ -9,6 +9,7 @@ class UniStuttgart:
     from palette import UniStuttgart as uniS
     ... color=uniS.blue, ... etc.  
     """
+    white       = '#ffffff'
     black       = '#000000'
     blue        = '#004191'
     lightblue   = '#00beff'
@@ -79,9 +80,11 @@ class UniStuttgart:
         """
         pass
 
-    def color_mixer( self, *args, **kwargs):
+    def color_mixer( *args, **kwargs):
         """ simply shadow the function below for namespace reasons
         see 'palette.color_mixer' for reference """
+        if isinstance( args[0], UniStuttgart):
+            args = args[1:]
         return color_mixer( *args, **kwargs)
 
 
